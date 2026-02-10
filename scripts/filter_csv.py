@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """Filter Discogs CSV exports to only include releases by library artists.
 
 This script significantly reduces the data size by only keeping releases

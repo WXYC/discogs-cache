@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """Import Discogs CSV files into PostgreSQL with proper multiline handling.
 
 Imports only the columns needed by the optimized schema (see 04-create-database.sql).

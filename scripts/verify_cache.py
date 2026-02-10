@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """Verify and optionally prune the Discogs cache against the WXYC library catalog.
 
 Uses multi-index (artist, album) pair matching with three independent fuzzy
