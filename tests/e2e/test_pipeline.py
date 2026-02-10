@@ -70,9 +70,9 @@ class TestPipeline:
             [
                 sys.executable,
                 str(RUN_PIPELINE),
-                str(CSV_DIR),
-                str(FIXTURE_LIBRARY_DB),
-                e2e_db_url,
+                "--csv-dir", str(CSV_DIR),
+                "--library-db", str(FIXTURE_LIBRARY_DB),
+                "--database-url", e2e_db_url,
             ],
             capture_output=True,
             text=True,
@@ -220,8 +220,8 @@ class TestPipelineWithoutLibrary:
             [
                 sys.executable,
                 str(RUN_PIPELINE),
-                str(CSV_DIR),
-                # No library_db argument — prune should be skipped
+                "--csv-dir", str(CSV_DIR),
+                # No --library-db — prune should be skipped
             ],
             capture_output=True,
             text=True,

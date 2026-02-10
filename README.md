@@ -13,12 +13,10 @@ The pipeline processes monthly Discogs data dumps (~40 GB XML) into a focused Po
 ## Prerequisites
 
 - Python 3.11+
-- PostgreSQL with the `pg_trgm` extension
+- PostgreSQL with the `pg_trgm` extension (or use [Docker Compose](#docker-compose))
 - Discogs monthly data dump (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
-- [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) to convert XML to CSV
-- `library_artists.txt` (one artist name per line, from request-parser's library)
-
-Or use Docker (see [Docker Compose](#docker-compose) below).
+- [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) -- clone separately; not a PyPI package
+- `library_artists.txt` and `library.db` (produced by request-parser's library sync)
 
 ## Setup
 
@@ -26,111 +24,96 @@ Or use Docker (see [Docker Compose](#docker-compose) below).
 pip install -e ".[dev]"
 ```
 
-## Running the Pipeline
+## Pipeline
+
+All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script supports two modes: full pipeline from XML, or database build from pre-filtered CSVs.
+
+| Step | Script | Description |
+|------|--------|-------------|
+| 1. Convert | discogs-xml2db | XML data dump to CSV |
+| 2. Fix newlines | `scripts/fix_csv_newlines.py` | Clean embedded newlines in CSV fields |
+| 3. Filter | `scripts/filter_csv.py` | Keep only library artists (~70% reduction) |
+| 4. Create schema | `schema/create_database.sql` | Set up tables and constraints |
+| 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
+| 6. Create indexes | `schema/create_indexes.sql` | Trigram GIN indexes for fuzzy search |
+| 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (most tracks) |
+| 8. Prune | `scripts/verify_cache.py --prune` | Remove non-library releases (~89% reduction) |
+| 9. Vacuum | `VACUUM FULL` | Reclaim disk space |
 
 ### Docker Compose
 
-The easiest way to run the full pipeline. Place your filtered CSVs and `library.db` in the `data/` directory:
+The easiest way to run the full pipeline:
 
 ```bash
-# Copy .env.example and adjust if needed
-cp .env.example .env
+# Clone discogs-xml2db (one-time setup)
+git clone https://github.com/philipmat/discogs-xml2db.git
 
-# Place filtered CSVs in data/csv/, library.db in data/
-mkdir -p data/csv
-cp /path/to/filtered/*.csv data/csv/
+# Place input files in data/
+mkdir -p data
+cp /path/to/releases.xml.gz data/
+cp /path/to/library_artists.txt data/
 cp /path/to/library.db data/
 
-# Run the pipeline
 docker compose up --build
 ```
 
-The pipeline service waits for Postgres to be ready, then runs all steps automatically.
-
 ### Orchestration Script
 
-Run all pipeline steps with a single command (steps 4-9 below):
+Full pipeline from XML (steps 1-9):
 
 ```bash
-python scripts/run_pipeline.py <csv_dir> [library_db] [database_url]
+python scripts/run_pipeline.py \
+  --xml /path/to/releases.xml.gz \
+  --xml2db /path/to/discogs-xml2db/ \
+  --library-artists /path/to/library_artists.txt \
+  --library-db /path/to/library.db \
+  --database-url postgresql://localhost:5432/discogs
 ```
 
-- `csv_dir` - Directory containing filtered Discogs CSV files
-- `library_db` - Path to library.db (optional; if omitted, prune step is skipped)
-- `database_url` - PostgreSQL URL (default: `DATABASE_URL` env var or `postgresql://localhost:5432/discogs`)
-
-### Manual Pipeline Steps
-
-#### 1. Convert XML to CSV
-
-Use discogs-xml2db to convert the Discogs XML dump to CSV files:
+Database build from pre-filtered CSVs (steps 4-9):
 
 ```bash
-python -m discogs_xml2db releases.xml --output csv
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/filtered/ \
+  --library-db /path/to/library.db \
+  --database-url postgresql://localhost:5432/discogs
 ```
 
-#### 2. Filter to library artists
+- `--library-db` is optional; if omitted, the prune step is skipped
+- `--database-url` defaults to `DATABASE_URL` env var or `postgresql://localhost:5432/discogs`
 
-Reduces data volume by ~70%, keeping only releases by artists in the library catalog:
+### Running Steps Manually
 
-```bash
-python scripts/filter_csv.py /path/to/library_artists.txt /path/to/csv_output/ /path/to/filtered_output/
-```
-
-#### 3. Fix CSV newlines (if needed)
+Individual steps can also be run directly:
 
 ```bash
-python scripts/fix_csv_newlines.py /path/to/filtered_output/
-```
+# 1. Convert XML to CSV (run from discogs-xml2db directory)
+cd /path/to/discogs-xml2db
+python run.py --export release --output /path/to/raw/ /path/to/releases.xml.gz
 
-#### 4. Create database and schema
+# 2. Fix CSV newlines
+python scripts/fix_csv_newlines.py /path/to/raw/release.csv /path/to/cleaned/release.csv
 
-```bash
-createdb discogs
+# 3. Filter to library artists
+python scripts/filter_csv.py /path/to/library_artists.txt /path/to/cleaned/ /path/to/filtered/
+
+# 4. Create schema
 psql -d discogs -f schema/create_database.sql
-```
 
-#### 5. Import filtered CSVs
+# 5. Import CSVs
+python scripts/import_csv.py /path/to/filtered/ [database_url]
 
-```bash
-python scripts/import_csv.py /path/to/filtered_output/ [database_url]
-```
-
-`database_url` defaults to `postgresql:///discogs`.
-
-#### 6. Create trigram indexes
-
-Run after data import (takes 10-30 minutes on large datasets):
-
-```bash
+# 6. Create indexes (10-30 min on large datasets)
 psql -d discogs -f schema/create_indexes.sql
-```
 
-#### 7. Deduplicate by master_id
-
-Removes duplicate releases sharing the same master release, keeping the one with the most tracks:
-
-```bash
+# 7. Deduplicate
 python scripts/dedup_releases.py [database_url]
-```
 
-#### 8. Prune to library matches
-
-Classifies each release as KEEP/PRUNE/REVIEW by fuzzy-matching (artist, title) pairs against the library catalog, then deletes PRUNE releases. This typically removes ~89% of data (e.g., 3 GB -> 340 MB).
-
-```bash
-# Dry run first to review the report
+# 8. Prune (dry run first, then with --prune)
 python scripts/verify_cache.py /path/to/library.db [database_url]
-
-# Prune (REVIEW releases are never deleted)
 python scripts/verify_cache.py --prune /path/to/library.db [database_url]
-```
 
-#### 9. Reclaim disk space
-
-After pruning, reclaim space with VACUUM FULL (locks tables, run during downtime):
-
-```bash
+# 9. Vacuum
 psql -d discogs -c "VACUUM FULL;"
 ```
 
@@ -166,15 +149,6 @@ Current consumers:
 - **request-parser** (`discogs/cache_service.py`) - Python/asyncpg
 - **Backend-Service** - TypeScript/Node.js (planned)
 
-## Utility Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/run_pipeline.py` | Pipeline orchestrator (steps 4-9) |
-| `scripts/csv_to_tsv.py` | Convert CSV to TSV with PostgreSQL escaping |
-| `scripts/fix_csv_newlines.py` | Replace embedded newlines in CSV fields |
-| `scripts/import_csv.sh` | Shell-based CSV import (legacy, use `import_csv.py` instead) |
-
 ## Testing
 
 Tests are organized into three layers:
@@ -190,10 +164,6 @@ DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
 # E2E tests (needs PostgreSQL, runs full pipeline as subprocess)
 DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
   pytest -m e2e -v
-
-# All tests requiring Postgres
-DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
-  pytest -m 'postgres or e2e' -v
 ```
 
 Integration and E2E tests are excluded by default (`pytest` with no args runs only unit tests). Start the test database with:

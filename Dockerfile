@@ -12,7 +12,8 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir \
     "psycopg[binary]>=3.1.0" \
     "asyncpg>=0.29.0" \
-    "rapidfuzz>=3.0.0"
+    "rapidfuzz>=3.0.0" \
+    "lxml>=4.9.0"
 
 # Copy application code
 COPY scripts/ scripts/

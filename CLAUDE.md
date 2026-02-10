@@ -9,24 +9,35 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 
 ## Architecture
 
-### ETL Pipeline
+### Pipeline Steps
 
 1. **Download** Discogs monthly data dumps (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
-2. **Convert** XML to CSV using [discogs-xml2db](https://github.com/philipmat/discogs-xml2db)
-3. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`) - ~70% data reduction
-4. **Create schema** (`schema/create_database.sql`)
-5. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
-6. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
-7. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
-8. **Prune** to library matches (`scripts/verify_cache.py --prune`) - ~89% data reduction (3 GB -> 340 MB)
-9. **Vacuum** to reclaim disk space (`VACUUM FULL`)
+2. **Convert** XML to CSV using [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) (not a PyPI package; must be cloned separately)
+3. **Fix newlines** in CSV fields (`scripts/fix_csv_newlines.py`)
+4. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`) -- ~70% data reduction
+5. **Create schema** (`schema/create_database.sql`)
+6. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
+7. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
+8. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
+9. **Prune** to library matches (`scripts/verify_cache.py --prune`) -- ~89% data reduction (3 GB -> 340 MB)
+10. **Vacuum** to reclaim disk space (`VACUUM FULL`)
+
+`scripts/run_pipeline.py` supports two modes:
+- `--xml` mode: runs steps 2-10 (XML conversion through vacuum)
+- `--csv-dir` mode: runs steps 5-10 (database build from pre-filtered CSVs)
+
+Step 1 (download) is always manual.
+
+### master_id Column Lifecycle
+
+The `release` table includes a `master_id` column used during import and dedup. The dedup copy-swap strategy (`CREATE TABLE AS SELECT ...` without `master_id`) drops the column automatically. After dedup, `master_id` no longer exists in the schema.
 
 ### Database Schema (Shared Contract)
 
 The SQL files in `schema/` define the contract between this ETL pipeline and all consumers:
 
-- `schema/create_database.sql` - Tables: `release`, `release_artist`, `release_track`, `release_track_artist`, `cache_metadata`
-- `schema/create_indexes.sql` - Trigram GIN indexes for fuzzy text search (pg_trgm)
+- `schema/create_database.sql` -- Tables: `release`, `release_artist`, `release_track`, `release_track_artist`, `cache_metadata`
+- `schema/create_indexes.sql` -- Trigram GIN indexes for fuzzy text search (pg_trgm)
 
 Consumers connect via `DATABASE_URL_DISCOGS` environment variable.
 
@@ -37,28 +48,27 @@ Consumers connect via `DATABASE_URL_DISCOGS` environment variable.
 - **`pipeline`** service: runs `scripts/run_pipeline.py` against the db
 
 ```bash
-docker compose up --build   # full pipeline
+docker compose up --build   # full pipeline (needs data/ and discogs-xml2db/)
 docker compose up db -d     # just the database (for tests)
 ```
 
 ### Key Files
 
-- `scripts/run_pipeline.py` - Pipeline orchestrator (schema, import, index, dedup, prune, vacuum)
-- `scripts/filter_csv.py` - Filter Discogs CSVs to library artists
-- `scripts/import_csv.py` - Import CSVs into PostgreSQL (psycopg COPY)
-- `scripts/dedup_releases.py` - Deduplicate releases by master_id (copy-swap strategy)
-- `scripts/verify_cache.py` - Multi-index matching pipeline for KEEP/PRUNE classification
-- `scripts/csv_to_tsv.py` - CSV to TSV conversion utility
-- `scripts/fix_csv_newlines.py` - Fix multiline CSV fields
-- `scripts/import_csv.sh` - Shell orchestration for CSV import (legacy)
-- `lib/matching.py` - Compilation detection utility
+- `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-10, --csv-dir for steps 5-10)
+- `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists
+- `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
+- `scripts/dedup_releases.py` -- Deduplicate releases by master_id (copy-swap with `DROP CASCADE`)
+- `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification
+- `scripts/csv_to_tsv.py` -- CSV to TSV conversion utility
+- `scripts/fix_csv_newlines.py` -- Fix multiline CSV fields
+- `lib/matching.py` -- Compilation detection utility
 
 ### External Inputs
 
 Two files are inputs to the ETL but produced by request-parser:
 
-1. **`library_artists.txt`** - One artist name per line, used by `filter_csv.py`
-2. **`library.db`** - SQLite database, used by `verify_cache.py` for KEEP/PRUNE classification
+1. **`library_artists.txt`** -- One artist name per line, used by `filter_csv.py`
+2. **`library.db`** -- SQLite database, used by `verify_cache.py` for KEEP/PRUNE classification
 
 Both are produced by request-parser's library sync (`scripts/sync-library.sh`).
 

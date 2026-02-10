@@ -2,8 +2,11 @@
 """Fix CSVs with embedded newlines in fields by replacing them with spaces."""
 
 import csv
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def fix_csv(input_path: Path, output_path: Path) -> int:
@@ -27,6 +30,19 @@ def fix_csv(input_path: Path, output_path: Path) -> int:
                     print(f"  {count:,} rows...")
 
     return count
+
+
+def fix_csv_dir(input_dir: Path, output_dir: Path) -> None:
+    """Apply fix_csv() to all .csv files in input_dir, writing to output_dir."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_files = sorted(input_dir.glob("*.csv"))
+    if not csv_files:
+        logger.warning("No .csv files found in %s", input_dir)
+        return
+    for csv_file in csv_files:
+        logger.info("Fixing newlines in %s ...", csv_file.name)
+        count = fix_csv(csv_file, output_dir / csv_file.name)
+        logger.info("  %s: %s rows", csv_file.name, f"{count:,}")
 
 
 def main():

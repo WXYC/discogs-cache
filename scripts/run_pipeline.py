@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
 """Orchestrate the Discogs cache ETL pipeline.
 
-Runs all pipeline steps in order: schema creation, CSV import, index creation,
-deduplication, pruning, and vacuum.  Each step is run as a subprocess for
-isolation; the script aborts on the first failure.
+Two modes of operation:
 
-Usage:
-    python scripts/run_pipeline.py <csv_dir> [library_db] [database_url]
+  Full pipeline from XML (steps 1-9):
+    python scripts/run_pipeline.py \\
+      --xml <releases.xml.gz> \\
+      --xml2db <path/to/discogs-xml2db/> \\
+      --library-artists <library_artists.txt> \\
+      [--library-db <library.db>] \\
+      [--database-url <url>]
 
-    csv_dir      Directory containing filtered Discogs CSV files.
-    library_db   Path to library.db for KEEP/PRUNE classification (optional;
-                 if omitted, the prune step is skipped).
-    database_url PostgreSQL connection URL (default: from DATABASE_URL env var,
-                 or postgresql://localhost:5432/discogs).
+  Database build from pre-filtered CSVs (steps 4-9):
+    python scripts/run_pipeline.py \\
+      --csv-dir <path/to/filtered/> \\
+      [--library-db <library.db>] \\
+      [--database-url <url>]
 
 Environment variables:
-    DATABASE_URL  Default database URL when not passed on the command line.
+    DATABASE_URL  Default database URL when --database-url is not specified.
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -40,6 +45,67 @@ SCHEMA_DIR = SCRIPT_DIR.parent / "schema"
 
 # Maximum seconds to wait for Postgres to become ready.
 PG_CONNECT_TIMEOUT = 30
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--xml",
+        type=Path,
+        metavar="FILE",
+        help="Path to Discogs releases XML dump (e.g. releases.xml.gz). "
+        "Requires --xml2db and --library-artists.",
+    )
+    source.add_argument(
+        "--csv-dir",
+        type=Path,
+        metavar="DIR",
+        help="Directory containing pre-filtered Discogs CSV files (skips steps 1-3).",
+    )
+
+    parser.add_argument(
+        "--xml2db",
+        type=Path,
+        metavar="DIR",
+        help="Path to cloned discogs-xml2db repository. Required with --xml.",
+    )
+    parser.add_argument(
+        "--library-artists",
+        type=Path,
+        metavar="FILE",
+        help="Path to library_artists.txt. Required with --xml.",
+    )
+    parser.add_argument(
+        "--library-db",
+        type=Path,
+        metavar="FILE",
+        help="Path to library.db for KEEP/PRUNE classification "
+        "(optional; if omitted, the prune step is skipped).",
+    )
+    parser.add_argument(
+        "--database-url",
+        type=str,
+        default=os.environ.get("DATABASE_URL", "postgresql://localhost:5432/discogs"),
+        help="PostgreSQL connection URL "
+        "(default: DATABASE_URL env var or postgresql://localhost:5432/discogs).",
+    )
+
+    args = parser.parse_args(argv)
+
+    # Validate --xml mode dependencies
+    if args.xml is not None:
+        if args.xml2db is None:
+            parser.error("--xml2db is required when using --xml")
+        if args.library_artists is None:
+            parser.error("--library-artists is required when using --xml")
+
+    return args
 
 
 def wait_for_postgres(db_url: str) -> None:
@@ -88,11 +154,11 @@ def run_sql_file(db_url: str, sql_file: Path, *, strip_concurrently: bool = Fals
     logger.info("  done.")
 
 
-def run_step(description: str, cmd: list[str]) -> None:
+def run_step(description: str, cmd: list[str], **kwargs) -> None:
     """Run a subprocess, logging and aborting on failure."""
     logger.info("Step: %s", description)
     start = time.monotonic()
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
     if result.stdout:
         for line in result.stdout.strip().splitlines():
@@ -148,51 +214,129 @@ def report_sizes(db_url: str) -> None:
     conn.close()
 
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-
-    csv_dir = Path(sys.argv[1])
-    library_db = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-    db_url = (
-        sys.argv[3]
-        if len(sys.argv) > 3
-        else os.environ.get("DATABASE_URL", "postgresql://localhost:5432/discogs")
+def convert_xml_to_csv(xml_file: Path, xml2db_dir: Path, output_dir: Path) -> None:
+    """Step 1: Convert Discogs XML dump to CSV using discogs-xml2db."""
+    run_step(
+        "Convert XML to CSV",
+        [
+            sys.executable, "run.py",
+            "--export", "release",
+            "--output", str(output_dir),
+            str(xml_file.resolve()),
+        ],
+        cwd=str(xml2db_dir),
     )
 
-    if not csv_dir.exists():
-        logger.error("CSV directory not found: %s", csv_dir)
-        sys.exit(1)
-    if library_db and not library_db.exists():
-        logger.error("library.db not found: %s", library_db)
-        sys.exit(1)
+
+def fix_csv_newlines(input_dir: Path, output_dir: Path) -> None:
+    """Step 2: Fix embedded newlines in CSV fields."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "fix_csv_newlines", SCRIPT_DIR / "fix_csv_newlines.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    logger.info("Step: Fix CSV newlines")
+    mod.fix_csv_dir(input_dir, output_dir)
+
+
+def filter_to_library_artists(
+    library_artists: Path, input_dir: Path, output_dir: Path
+) -> None:
+    """Step 3: Filter CSVs to only releases by library artists."""
+    run_step(
+        "Filter to library artists",
+        [
+            sys.executable, str(SCRIPT_DIR / "filter_csv.py"),
+            str(library_artists),
+            str(input_dir),
+            str(output_dir),
+        ],
+    )
+
+
+def main() -> None:
+    args = parse_args()
 
     python = sys.executable
+    db_url = args.database_url
     pipeline_start = time.monotonic()
 
-    # Step 1: Wait for Postgres
+    # Validate paths
+    if args.xml is not None:
+        if not args.xml.exists():
+            logger.error("XML file not found: %s", args.xml)
+            sys.exit(1)
+        if not args.xml2db.exists():
+            logger.error("discogs-xml2db directory not found: %s", args.xml2db)
+            sys.exit(1)
+        if not args.library_artists.exists():
+            logger.error("library_artists.txt not found: %s", args.library_artists)
+            sys.exit(1)
+    else:
+        if not args.csv_dir.exists():
+            logger.error("CSV directory not found: %s", args.csv_dir)
+            sys.exit(1)
+
+    if args.library_db and not args.library_db.exists():
+        logger.error("library.db not found: %s", args.library_db)
+        sys.exit(1)
+
+    # Steps 1-3: XML conversion, newline fix, filtering (only in --xml mode)
+    if args.xml is not None:
+        with tempfile.TemporaryDirectory(prefix="discogs_pipeline_") as tmpdir:
+            tmp = Path(tmpdir)
+            raw_csv_dir = tmp / "raw"
+            cleaned_csv_dir = tmp / "cleaned"
+            filtered_csv_dir = tmp / "filtered"
+
+            # Step 1: Convert XML to CSV
+            convert_xml_to_csv(args.xml, args.xml2db, raw_csv_dir)
+
+            # Step 2: Fix CSV newlines
+            fix_csv_newlines(raw_csv_dir, cleaned_csv_dir)
+
+            # Step 3: Filter to library artists
+            filter_to_library_artists(args.library_artists, cleaned_csv_dir, filtered_csv_dir)
+
+            # Steps 4-9: Database build
+            _run_database_build(db_url, filtered_csv_dir, args.library_db, python)
+    else:
+        # Steps 4-9 only (--csv-dir mode)
+        _run_database_build(db_url, args.csv_dir, args.library_db, python)
+
+    total = time.monotonic() - pipeline_start
+    logger.info("Pipeline complete in %.1f minutes.", total / 60)
+
+
+def _run_database_build(
+    db_url: str, csv_dir: Path, library_db: Path | None, python: str
+) -> None:
+    """Steps 4-9: database schema, import, indexes, dedup, prune, vacuum."""
+    # Step 4: Wait for Postgres
     wait_for_postgres(db_url)
 
-    # Step 2: Create schema
+    # Step 5: Create schema
     run_sql_file(db_url, SCHEMA_DIR / "create_database.sql")
 
-    # Step 3: Import CSVs
+    # Step 6: Import CSVs
     run_step(
         "Import CSVs",
         [python, str(SCRIPT_DIR / "import_csv.py"), str(csv_dir), db_url],
     )
 
-    # Step 4: Create trigram indexes (strip CONCURRENTLY for fresh DB)
+    # Step 7: Create trigram indexes (strip CONCURRENTLY for fresh DB)
     run_sql_file(db_url, SCHEMA_DIR / "create_indexes.sql", strip_concurrently=True)
 
-    # Step 5: Deduplicate by master_id
+    # Step 8: Deduplicate by master_id
     run_step(
         "Deduplicate releases",
         [python, str(SCRIPT_DIR / "dedup_releases.py"), db_url],
     )
 
-    # Step 6: Prune to library matches (optional)
+    # Step 9: Prune to library matches (optional)
     if library_db:
         run_step(
             "Prune to library matches",
@@ -201,14 +345,11 @@ def main() -> None:
     else:
         logger.info("Skipping prune step (no library.db provided)")
 
-    # Step 7: Vacuum
+    # Step 10: Vacuum
     run_vacuum(db_url)
 
-    # Step 8: Report
+    # Step 11: Report
     report_sizes(db_url)
-
-    total = time.monotonic() - pipeline_start
-    logger.info("Pipeline complete in %.1f minutes.", total / 60)
 
 
 if __name__ == "__main__":
