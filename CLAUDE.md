@@ -30,15 +30,27 @@ The SQL files in `schema/` define the contract between this ETL pipeline and all
 
 Consumers connect via `DATABASE_URL_DISCOGS` environment variable.
 
+### Docker Compose
+
+`docker-compose.yml` provides a self-contained environment:
+- **`db`** service: PostgreSQL 16 with pg_trgm, port 5433:5432
+- **`pipeline`** service: runs `scripts/run_pipeline.py` against the db
+
+```bash
+docker compose up --build   # full pipeline
+docker compose up db -d     # just the database (for tests)
+```
+
 ### Key Files
 
+- `scripts/run_pipeline.py` - Pipeline orchestrator (schema, import, index, dedup, prune, vacuum)
 - `scripts/filter_csv.py` - Filter Discogs CSVs to library artists
 - `scripts/import_csv.py` - Import CSVs into PostgreSQL (psycopg COPY)
 - `scripts/dedup_releases.py` - Deduplicate releases by master_id (copy-swap strategy)
 - `scripts/verify_cache.py` - Multi-index matching pipeline for KEEP/PRUNE classification
 - `scripts/csv_to_tsv.py` - CSV to TSV conversion utility
 - `scripts/fix_csv_newlines.py` - Fix multiline CSV fields
-- `scripts/import_csv.sh` - Shell orchestration for CSV import
+- `scripts/import_csv.sh` - Shell orchestration for CSV import (legacy)
 - `lib/matching.py` - Compilation detection utility
 
 ### External Inputs
@@ -54,13 +66,24 @@ Both are produced by request-parser's library sync (`scripts/sync-library.sh`).
 
 ### Testing
 
+Three test layers with pytest markers:
+
 ```bash
-# Unit tests (no external dependencies)
+# Unit tests (no external dependencies, run by default)
 pytest tests/unit/ -v
 
-# Integration tests (needs library.db)
-LIBRARY_DB=/path/to/library.db pytest tests/integration/ -v -m integration
+# Integration tests (needs PostgreSQL on port 5433)
+DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
+  pytest -m postgres -v
+
+# E2E tests (runs full pipeline as subprocess against test Postgres)
+DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
+  pytest -m e2e -v
 ```
+
+Markers: `postgres` (needs PostgreSQL), `e2e` (full pipeline), `integration` (needs library.db). Integration and E2E tests are excluded from the default `pytest` run via `addopts` in `pyproject.toml`.
+
+Test fixtures are in `tests/fixtures/` (CSV files, library.db, library_artists.txt). Regenerate with `python tests/fixtures/create_fixtures.py`.
 
 ### Code Style
 

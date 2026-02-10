@@ -26,3 +26,34 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: pytest tests/unit/ -v
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: discogs
+          POSTGRES_PASSWORD: discogs
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U discogs"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Enable pg_trgm extension
+        run: |
+          PGPASSWORD=discogs psql -h localhost -p 5433 -U discogs -d postgres \
+            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+      - name: Run integration and E2E tests
+        env:
+          DATABASE_URL_TEST: postgresql://discogs:discogs@localhost:5433/postgres
+        run: pytest -m 'postgres or e2e' -v

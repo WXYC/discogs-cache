@@ -105,12 +105,16 @@ def copy_table(conn, old_table: str, new_table: str, columns: str, id_col: str) 
 
 
 def swap_tables(conn, old_table: str, new_table: str) -> None:
-    """Swap old and new tables atomically."""
+    """Swap old and new tables atomically.
+
+    Uses CASCADE on DROP to remove FK constraints that reference the old table.
+    Constraints are recreated by add_constraints_and_indexes() after all swaps.
+    """
     bak = f"{old_table}_old"
     with conn.cursor() as cur:
         cur.execute(f"ALTER TABLE {old_table} RENAME TO {bak}")
         cur.execute(f"ALTER TABLE {new_table} RENAME TO {old_table}")
-        cur.execute(f"DROP TABLE {bak}")
+        cur.execute(f"DROP TABLE {bak} CASCADE")
     conn.commit()
     logger.info(f"  Swapped {new_table} -> {old_table}")
 

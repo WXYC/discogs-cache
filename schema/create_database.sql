@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS release (
     id              integer PRIMARY KEY,
     title           text NOT NULL,
     release_year    smallint,
-    artwork_url     text
+    artwork_url     text,
+    master_id       integer          -- used by dedup, dropped after dedup copy-swap
 );
 
 -- Artists on releases

@@ -56,8 +56,8 @@ TABLES: list[TableConfig] = [
     {
         "csv_file": "release.csv",
         "table": "release",
-        "csv_columns": ["id", "title", "released"],
-        "db_columns": ["id", "title", "release_year"],
+        "csv_columns": ["id", "title", "released", "master_id"],
+        "db_columns": ["id", "title", "release_year", "master_id"],
         "required": ["id", "title"],
         "transforms": {"released": extract_year},
     },

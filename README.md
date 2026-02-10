@@ -18,15 +18,50 @@ The pipeline processes monthly Discogs data dumps (~40 GB XML) into a focused Po
 - [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) to convert XML to CSV
 - `library_artists.txt` (one artist name per line, from request-parser's library)
 
+Or use Docker (see [Docker Compose](#docker-compose) below).
+
 ## Setup
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-## Pipeline Steps
+## Running the Pipeline
 
-### 1. Convert XML to CSV
+### Docker Compose
+
+The easiest way to run the full pipeline. Place your filtered CSVs and `library.db` in the `data/` directory:
+
+```bash
+# Copy .env.example and adjust if needed
+cp .env.example .env
+
+# Place filtered CSVs in data/csv/, library.db in data/
+mkdir -p data/csv
+cp /path/to/filtered/*.csv data/csv/
+cp /path/to/library.db data/
+
+# Run the pipeline
+docker compose up --build
+```
+
+The pipeline service waits for Postgres to be ready, then runs all steps automatically.
+
+### Orchestration Script
+
+Run all pipeline steps with a single command (steps 4-9 below):
+
+```bash
+python scripts/run_pipeline.py <csv_dir> [library_db] [database_url]
+```
+
+- `csv_dir` - Directory containing filtered Discogs CSV files
+- `library_db` - Path to library.db (optional; if omitted, prune step is skipped)
+- `database_url` - PostgreSQL URL (default: `DATABASE_URL` env var or `postgresql://localhost:5432/discogs`)
+
+### Manual Pipeline Steps
+
+#### 1. Convert XML to CSV
 
 Use discogs-xml2db to convert the Discogs XML dump to CSV files:
 
@@ -34,7 +69,7 @@ Use discogs-xml2db to convert the Discogs XML dump to CSV files:
 python -m discogs_xml2db releases.xml --output csv
 ```
 
-### 2. Filter to library artists
+#### 2. Filter to library artists
 
 Reduces data volume by ~70%, keeping only releases by artists in the library catalog:
 
@@ -42,14 +77,20 @@ Reduces data volume by ~70%, keeping only releases by artists in the library cat
 python scripts/filter_csv.py /path/to/library_artists.txt /path/to/csv_output/ /path/to/filtered_output/
 ```
 
-### 3. Create database and schema
+#### 3. Fix CSV newlines (if needed)
+
+```bash
+python scripts/fix_csv_newlines.py /path/to/filtered_output/
+```
+
+#### 4. Create database and schema
 
 ```bash
 createdb discogs
 psql -d discogs -f schema/create_database.sql
 ```
 
-### 4. Import filtered CSVs
+#### 5. Import filtered CSVs
 
 ```bash
 python scripts/import_csv.py /path/to/filtered_output/ [database_url]
@@ -57,7 +98,7 @@ python scripts/import_csv.py /path/to/filtered_output/ [database_url]
 
 `database_url` defaults to `postgresql:///discogs`.
 
-### 5. Create trigram indexes
+#### 6. Create trigram indexes
 
 Run after data import (takes 10-30 minutes on large datasets):
 
@@ -65,7 +106,7 @@ Run after data import (takes 10-30 minutes on large datasets):
 psql -d discogs -f schema/create_indexes.sql
 ```
 
-### 6. Deduplicate by master_id
+#### 7. Deduplicate by master_id
 
 Removes duplicate releases sharing the same master release, keeping the one with the most tracks:
 
@@ -73,7 +114,7 @@ Removes duplicate releases sharing the same master release, keeping the one with
 python scripts/dedup_releases.py [database_url]
 ```
 
-### 7. Prune to library matches
+#### 8. Prune to library matches
 
 Classifies each release as KEEP/PRUNE/REVIEW by fuzzy-matching (artist, title) pairs against the library catalog, then deletes PRUNE releases. This typically removes ~89% of data (e.g., 3 GB -> 340 MB).
 
@@ -85,7 +126,7 @@ python scripts/verify_cache.py /path/to/library.db [database_url]
 python scripts/verify_cache.py --prune /path/to/library.db [database_url]
 ```
 
-### 8. Reclaim disk space
+#### 9. Reclaim disk space
 
 After pruning, reclaim space with VACUUM FULL (locks tables, run during downtime):
 
@@ -129,18 +170,36 @@ Current consumers:
 
 | Script | Purpose |
 |--------|---------|
+| `scripts/run_pipeline.py` | Pipeline orchestrator (steps 4-9) |
 | `scripts/csv_to_tsv.py` | Convert CSV to TSV with PostgreSQL escaping |
 | `scripts/fix_csv_newlines.py` | Replace embedded newlines in CSV fields |
 | `scripts/import_csv.sh` | Shell-based CSV import (legacy, use `import_csv.py` instead) |
 
 ## Testing
 
+Tests are organized into three layers:
+
 ```bash
-# Unit tests (no external dependencies)
+# Unit tests (no external dependencies, run by default)
 pytest tests/unit/ -v
 
-# Integration tests (needs library.db)
-LIBRARY_DB=/path/to/library.db pytest tests/integration/ -v -m integration
+# Integration tests (needs PostgreSQL)
+DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
+  pytest -m postgres -v
+
+# E2E tests (needs PostgreSQL, runs full pipeline as subprocess)
+DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
+  pytest -m e2e -v
+
+# All tests requiring Postgres
+DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
+  pytest -m 'postgres or e2e' -v
+```
+
+Integration and E2E tests are excluded by default (`pytest` with no args runs only unit tests). Start the test database with:
+
+```bash
+docker compose up db -d
 ```
 
 ## Migrations

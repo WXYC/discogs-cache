@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-discogs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-discogs}
+      POSTGRES_DB: ${POSTGRES_DB:-discogs}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-discogs}"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  pipeline:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-discogs}:${POSTGRES_PASSWORD:-discogs}@db:5432/${POSTGRES_DB:-discogs}
+    volumes:
+      - ./data/csv:/data/csv:ro
+      - ./data/library.db:/data/library.db:ro
+    command: >
+      python scripts/run_pipeline.py /data/csv /data/library.db
+
+volumes:
+  pgdata:

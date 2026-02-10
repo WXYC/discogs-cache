@@ -39,7 +39,9 @@ ignore = [
 
 [tool.pytest.ini_options]
 markers = [
-    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "integration: marks tests as integration tests (needs library.db)",
+    "postgres: marks tests that need a PostgreSQL database",
+    "e2e: full pipeline end-to-end test",
 ]
-addopts = "-m 'not integration'"
+addopts = "-m 'not integration and not postgres and not e2e'"
 testpaths = ["tests"]

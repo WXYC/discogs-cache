@@ -13,3 +13,7 @@ venv/
 .mypy_cache/
 .pytest_cache/
 artist_mappings.json
+
+# Allow test fixture files
+!tests/fixtures/**/*.db
+!tests/fixtures/**/*.csv
