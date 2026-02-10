@@ -73,16 +73,24 @@ Removes duplicate releases sharing the same master release, keeping the one with
 python scripts/dedup_releases.py [database_url]
 ```
 
-### 7. Verify and prune
+### 7. Prune to library matches
 
-Classifies each release as KEEP/PRUNE/REVIEW by fuzzy-matching against the library catalog:
+Classifies each release as KEEP/PRUNE/REVIEW by fuzzy-matching (artist, title) pairs against the library catalog, then deletes PRUNE releases. This typically removes ~89% of data (e.g., 3 GB -> 340 MB).
 
 ```bash
-# Dry run (default): report what would be pruned
+# Dry run first to review the report
 python scripts/verify_cache.py /path/to/library.db [database_url]
 
-# Actually prune (REVIEW releases are never deleted)
+# Prune (REVIEW releases are never deleted)
 python scripts/verify_cache.py --prune /path/to/library.db [database_url]
+```
+
+### 8. Reclaim disk space
+
+After pruning, reclaim space with VACUUM FULL (locks tables, run during downtime):
+
+```bash
+psql -d discogs -c "VACUUM FULL;"
 ```
 
 ## Database Schema

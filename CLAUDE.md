@@ -18,7 +18,8 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 5. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
 6. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
 7. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
-8. **Verify** cache against library catalog (`scripts/verify_cache.py`) - classifies releases as KEEP/PRUNE/REVIEW
+8. **Prune** to library matches (`scripts/verify_cache.py --prune`) - ~89% data reduction (3 GB -> 340 MB)
+9. **Vacuum** to reclaim disk space (`VACUUM FULL`)
 
 ### Database Schema (Shared Contract)
 
