@@ -13,8 +13,8 @@ import uuid
 from pathlib import Path
 
 import psycopg
-from psycopg import sql
 import pytest
+from psycopg import sql
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 CSV_DIR = FIXTURES_DIR / "csv"
@@ -70,9 +70,12 @@ class TestPipeline:
             [
                 sys.executable,
                 str(RUN_PIPELINE),
-                "--csv-dir", str(CSV_DIR),
-                "--library-db", str(FIXTURE_LIBRARY_DB),
-                "--database-url", e2e_db_url,
+                "--csv-dir",
+                str(CSV_DIR),
+                "--library-db",
+                str(FIXTURE_LIBRARY_DB),
+                "--database-url",
+                e2e_db_url,
             ],
             capture_output=True,
             text=True,
@@ -106,8 +109,7 @@ class TestPipeline:
         compilation releases, which may be pruned depending on matching.
         """
         conn = self._connect()
-        for table in ("release", "release_artist", "release_track",
-                       "cache_metadata"):
+        for table in ("release", "release_artist", "release_track", "cache_metadata"):
             with conn.cursor() as cur:
                 cur.execute(f"SELECT count(*) FROM {table}")
                 count = cur.fetchone()[0]
@@ -122,9 +124,7 @@ class TestPipeline:
         """
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id"
-            )
+            cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
         assert ids == [1002], f"Expected only 1002 after dedup, got {ids}"
@@ -194,8 +194,7 @@ class TestPipeline:
             """)
             fk_tables = {row[0] for row in cur.fetchall()}
         conn.close()
-        expected = {"release_artist", "release_track",
-                    "release_track_artist", "cache_metadata"}
+        expected = {"release_artist", "release_track", "release_track_artist", "cache_metadata"}
         assert expected.issubset(fk_tables)
 
     def test_null_title_release_not_imported(self) -> None:
@@ -220,7 +219,8 @@ class TestPipelineWithoutLibrary:
             [
                 sys.executable,
                 str(RUN_PIPELINE),
-                "--csv-dir", str(CSV_DIR),
+                "--csv-dir",
+                str(CSV_DIR),
                 # No --library-db — prune should be skipped
             ],
             capture_output=True,
