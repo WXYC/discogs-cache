@@ -32,6 +32,7 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 |------|--------|-------------|
 | 1. Convert | discogs-xml2db | XML data dump to CSV |
 | 2. Fix newlines | `scripts/fix_csv_newlines.py` | Clean embedded newlines in CSV fields |
+| 2.5. Enrich | `scripts/enrich_library_artists.py` | Enrich artist list with cross-references (optional) |
 | 3. Filter | `scripts/filter_csv.py` | Keep only library artists (~70% reduction) |
 | 4. Create schema | `schema/create_database.sql` | Set up tables and constraints |
 | 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
@@ -39,6 +40,8 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 | 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (most tracks) |
 | 8. Prune | `scripts/verify_cache.py --prune` | Remove non-library releases (~89% reduction) |
 | 9. Vacuum | `VACUUM FULL` | Reclaim disk space |
+
+Step 2.5 generates `library_artists.txt` from `library.db` and optionally enriches it with alternate artist names and cross-references from the WXYC MySQL catalog database. This reduces false negatives at the filtering stage for artists known by multiple names (e.g., "Body Count" filed under Ice-T).
 
 ### Docker Compose
 
@@ -67,6 +70,18 @@ python scripts/run_pipeline.py \
   --xml2db /path/to/discogs-xml2db/ \
   --library-artists /path/to/library_artists.txt \
   --library-db /path/to/library.db \
+  --database-url postgresql://localhost:5432/discogs
+```
+
+To enrich `library_artists.txt` with alternate names and cross-references from the WXYC catalog database, add `--wxyc-db-url`:
+
+```bash
+python scripts/run_pipeline.py \
+  --xml /path/to/releases.xml.gz \
+  --xml2db /path/to/discogs-xml2db/ \
+  --library-artists /path/to/library_artists.txt \
+  --library-db /path/to/library.db \
+  --wxyc-db-url mysql://user:pass@host:port/wxycmusic \
   --database-url postgresql://localhost:5432/discogs
 ```
 
@@ -160,6 +175,9 @@ pytest tests/unit/ -v
 # Integration tests (needs PostgreSQL)
 DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
   pytest -m postgres -v
+
+# MySQL integration tests (needs WXYC MySQL on port 3307)
+pytest -m mysql -v
 
 # E2E tests (needs PostgreSQL, runs full pipeline as subprocess)
 DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \

@@ -9,6 +9,7 @@ Two modes of operation:
       --xml2db <path/to/discogs-xml2db/> \\
       --library-artists <library_artists.txt> \\
       [--library-db <library.db>] \\
+      [--wxyc-db-url <mysql://user:pass@host:port/db>] \\
       [--database-url <url>]
 
   Database build from pre-filtered CSVs (steps 4-9):
@@ -89,6 +90,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "(optional; if omitted, the prune step is skipped).",
     )
     parser.add_argument(
+        "--wxyc-db-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="MySQL connection URL for WXYC catalog database "
+        "(e.g. mysql://user:pass@host:port/dbname). "
+        "Enriches library_artists.txt with alternate names and cross-references. "
+        "Requires --library-db.",
+    )
+    parser.add_argument(
         "--database-url",
         type=str,
         default=os.environ.get("DATABASE_URL", "postgresql://localhost:5432/discogs"),
@@ -104,6 +115,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parser.error("--xml2db is required when using --xml")
         if args.library_artists is None:
             parser.error("--library-artists is required when using --xml")
+
+    if args.wxyc_db_url and not args.library_db:
+        parser.error("--library-db is required when using --wxyc-db-url")
 
     return args
 
@@ -180,7 +194,13 @@ def run_step(description: str, cmd: list[str], **kwargs) -> None:
 def run_vacuum(db_url: str) -> None:
     """Run VACUUM FULL on all pipeline tables."""
     logger.info("Running VACUUM FULL ...")
-    tables = ["release", "release_artist", "release_track", "release_track_artist", "cache_metadata"]
+    tables = [
+        "release",
+        "release_artist",
+        "release_track",
+        "release_track_artist",
+        "cache_metadata",
+    ]
     conn = psycopg.connect(db_url, autocommit=True)
     for table in tables:
         logger.info("  VACUUM FULL %s ...", table)
@@ -219,9 +239,12 @@ def convert_xml_to_csv(xml_file: Path, xml2db_dir: Path, output_dir: Path) -> No
     run_step(
         "Convert XML to CSV",
         [
-            sys.executable, "run.py",
-            "--export", "release",
-            "--output", str(output_dir),
+            sys.executable,
+            "run.py",
+            "--export",
+            "release",
+            "--output",
+            str(output_dir),
             str(xml_file.resolve()),
         ],
         cwd=str(xml2db_dir),
@@ -242,14 +265,32 @@ def fix_csv_newlines(input_dir: Path, output_dir: Path) -> None:
     mod.fix_csv_dir(input_dir, output_dir)
 
 
-def filter_to_library_artists(
-    library_artists: Path, input_dir: Path, output_dir: Path
+def enrich_library_artists(
+    library_db: Path,
+    library_artists_out: Path,
+    wxyc_db_url: str | None = None,
 ) -> None:
+    """Step 2.5: Enrich library_artists.txt with WXYC cross-reference data."""
+    cmd = [
+        sys.executable,
+        str(SCRIPT_DIR / "enrich_library_artists.py"),
+        "--library-db",
+        str(library_db),
+        "--output",
+        str(library_artists_out),
+    ]
+    if wxyc_db_url:
+        cmd.extend(["--wxyc-db-url", wxyc_db_url])
+    run_step("Enrich library artists", cmd)
+
+
+def filter_to_library_artists(library_artists: Path, input_dir: Path, output_dir: Path) -> None:
     """Step 3: Filter CSVs to only releases by library artists."""
     run_step(
         "Filter to library artists",
         [
-            sys.executable, str(SCRIPT_DIR / "filter_csv.py"),
+            sys.executable,
+            str(SCRIPT_DIR / "filter_csv.py"),
             str(library_artists),
             str(input_dir),
             str(output_dir),
@@ -298,8 +339,16 @@ def main() -> None:
             # Step 2: Fix CSV newlines
             fix_csv_newlines(raw_csv_dir, cleaned_csv_dir)
 
+            # Step 2.5: Enrich library_artists.txt (optional)
+            if args.library_db:
+                enriched_artists = tmp / "enriched_library_artists.txt"
+                enrich_library_artists(args.library_db, enriched_artists, args.wxyc_db_url)
+                library_artists_path = enriched_artists
+            else:
+                library_artists_path = args.library_artists
+
             # Step 3: Filter to library artists
-            filter_to_library_artists(args.library_artists, cleaned_csv_dir, filtered_csv_dir)
+            filter_to_library_artists(library_artists_path, cleaned_csv_dir, filtered_csv_dir)
 
             # Steps 4-9: Database build
             _run_database_build(db_url, filtered_csv_dir, args.library_db, python)
@@ -311,9 +360,7 @@ def main() -> None:
     logger.info("Pipeline complete in %.1f minutes.", total / 60)
 
 
-def _run_database_build(
-    db_url: str, csv_dir: Path, library_db: Path | None, python: str
-) -> None:
+def _run_database_build(db_url: str, csv_dir: Path, library_db: Path | None, python: str) -> None:
     """Steps 4-9: database schema, import, indexes, dedup, prune, vacuum."""
     # Step 4: Wait for Postgres
     wait_for_postgres(db_url)
