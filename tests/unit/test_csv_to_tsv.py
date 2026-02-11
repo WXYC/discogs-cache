@@ -38,7 +38,7 @@ class TestConvert:
         """Empty CSV fields are converted to \\N (PostgreSQL NULL)."""
         csv_file = tmp_path / "input.csv"
         tsv_file = tmp_path / "output.tsv"
-        csv_file.write_text('a,b,c\n1,,3\n')
+        csv_file.write_text("a,b,c\n1,,3\n")
 
         convert(csv_file, tsv_file)
         lines = tsv_file.read_text().splitlines()
@@ -54,9 +54,7 @@ class TestConvert:
         ],
         ids=["backslash", "tab", "newline", "carriage-return"],
     )
-    def test_special_char_escaping(
-        self, tmp_path: Path, input_val: str, expected_val: str
-    ) -> None:
+    def test_special_char_escaping(self, tmp_path: Path, input_val: str, expected_val: str) -> None:
         """Special characters are escaped for PostgreSQL COPY."""
         csv_file = tmp_path / "input.csv"
         tsv_file = tmp_path / "output.tsv"

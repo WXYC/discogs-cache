@@ -43,10 +43,17 @@ class TestExtractYear:
             ("2023-00-00", "2023"),
         ],
         ids=[
-            "full-date", "full-date-1997", "full-date-1969",
-            "year-only", "year-only-1979",
-            "empty", "none", "unknown-text", "tbd-text",
-            "zeros", "partial-date",
+            "full-date",
+            "full-date-1997",
+            "full-date-1969",
+            "year-only",
+            "year-only-1979",
+            "empty",
+            "none",
+            "unknown-text",
+            "tbd-text",
+            "zeros",
+            "partial-date",
         ],
     )
     def test_extract_year(self, input_val: str | None, expected: str | None) -> None:

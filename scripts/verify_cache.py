@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """Verify and optionally prune the Discogs cache against the WXYC library catalog.
 
 Uses multi-index (artist, album) pair matching with three independent fuzzy
@@ -30,6 +28,8 @@ Usage:
     database_url defaults to postgresql:///discogs
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import enum
@@ -37,7 +37,6 @@ import json
 import logging
 import re
 import sqlite3
-
 import sys
 import time
 import unicodedata
@@ -209,7 +208,7 @@ class LibraryIndex:
         self.compilation_titles = compilation_titles
 
     @classmethod
-    def from_rows(cls, rows: list[tuple[str, str]]) -> "LibraryIndex":
+    def from_rows(cls, rows: list[tuple[str, str]]) -> LibraryIndex:
         """Build index from (artist, title) row tuples.
 
         Args:
@@ -258,7 +257,7 @@ class LibraryIndex:
         )
 
     @classmethod
-    def from_sqlite(cls, db_path: Path) -> "LibraryIndex":
+    def from_sqlite(cls, db_path: Path) -> LibraryIndex:
         """Build index from the library SQLite database.
 
         Args:

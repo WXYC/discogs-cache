@@ -152,9 +152,7 @@ class TestFilterCsvFile:
         input_path = FIXTURES_DIR / "csv" / "release.csv"
         output_path = tmp_path / "release_filtered.csv"
 
-        input_count, output_count = filter_csv_file(
-            input_path, output_path, matching_ids, "id"
-        )
+        input_count, output_count = filter_csv_file(input_path, output_path, matching_ids, "id")
         assert input_count > 0
         assert output_count == 2
 
@@ -183,9 +181,7 @@ class TestFilterCsvFile:
         input_path = FIXTURES_DIR / "csv" / "release.csv"
         output_path = tmp_path / "release_filtered.csv"
 
-        input_count, output_count = filter_csv_file(
-            input_path, output_path, set(), "id"
-        )
+        input_count, output_count = filter_csv_file(input_path, output_path, set(), "id")
         assert input_count > 0
         assert output_count == 0
 
@@ -194,7 +190,5 @@ class TestFilterCsvFile:
         input_path = FIXTURES_DIR / "csv" / "release_track.csv"
         output_path = tmp_path / "release_track_filtered.csv"
 
-        _, output_count = filter_csv_file(
-            input_path, output_path, matching_ids, "release_id"
-        )
+        _, output_count = filter_csv_file(input_path, output_path, matching_ids, "release_id")
         assert output_count == 3  # Release 1001 has 3 tracks

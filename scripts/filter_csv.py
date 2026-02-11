@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """Filter Discogs CSV exports to only include releases by library artists.
 
 This script significantly reduces the data size by only keeping releases
@@ -9,6 +7,8 @@ that have at least one artist matching the library catalog.
 Usage:
     python filter_discogs_csv.py /path/to/library_artists.txt /path/to/csv_output/ /path/to/filtered_output/
 """
+
+from __future__ import annotations
 
 import csv
 import logging

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """Import Discogs CSV files into PostgreSQL with proper multiline handling.
 
 Imports only the columns needed by the optimized schema (see 04-create-database.sql).
 Dropped tables (release_label, release_genre, release_style, artist) are skipped.
 The release_image.csv is processed separately to populate artwork_url on release.
 """
+
+from __future__ import annotations
 
 import csv
 import logging

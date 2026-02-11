@@ -14,8 +14,13 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 CSV_DIR = FIXTURES_DIR / "csv"
 FIXTURE_LIBRARY_DB = FIXTURES_DIR / "library.db"
 
-ALL_TABLES = ("cache_metadata", "release_track_artist",
-              "release_track", "release_artist", "release")
+ALL_TABLES = (
+    "cache_metadata",
+    "release_track_artist",
+    "release_track",
+    "release_artist",
+    "release",
+)
 
 # Load import_csv module
 _IMPORT_PATH = Path(__file__).parent.parent.parent / "scripts" / "import_csv.py"
@@ -162,9 +167,7 @@ class TestPruneExecution:
         conn = psycopg.connect(self.db_url)
         with conn.cursor() as cur:
             id_list = list(self.report.prune_ids)
-            cur.execute(
-                "DELETE FROM release WHERE id = ANY(%s::integer[])", (id_list,)
-            )
+            cur.execute("DELETE FROM release WHERE id = ANY(%s::integer[])", (id_list,))
         conn.commit()
 
         with conn.cursor() as cur:

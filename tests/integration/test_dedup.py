@@ -35,8 +35,13 @@ add_constraints_and_indexes = _dd.add_constraints_and_indexes
 
 pytestmark = pytest.mark.postgres
 
-ALL_TABLES = ("cache_metadata", "release_track_artist",
-              "release_track", "release_artist", "release")
+ALL_TABLES = (
+    "cache_metadata",
+    "release_track_artist",
+    "release_track",
+    "release_artist",
+    "release",
+)
 
 
 def _drop_all_tables(conn) -> None:
@@ -83,7 +88,6 @@ def _fresh_import(db_url: str) -> None:
     conn.close()
 
 
-
 def _run_dedup(db_url: str) -> None:
     """Run the full dedup pipeline against the database."""
     conn = psycopg.connect(db_url, autocommit=True)
@@ -91,14 +95,30 @@ def _run_dedup(db_url: str) -> None:
     if delete_count > 0:
         tables = [
             ("release", "new_release", "id, title, release_year, artwork_url", "id"),
-            ("release_artist", "new_release_artist",
-             "release_id, artist_name, extra", "release_id"),
-            ("release_track", "new_release_track",
-             "release_id, sequence, position, title, duration", "release_id"),
-            ("release_track_artist", "new_release_track_artist",
-             "release_id, track_sequence, artist_name", "release_id"),
-            ("cache_metadata", "new_cache_metadata",
-             "release_id, cached_at, source, last_validated", "release_id"),
+            (
+                "release_artist",
+                "new_release_artist",
+                "release_id, artist_name, extra",
+                "release_id",
+            ),
+            (
+                "release_track",
+                "new_release_track",
+                "release_id, sequence, position, title, duration",
+                "release_id",
+            ),
+            (
+                "release_track_artist",
+                "new_release_track_artist",
+                "release_id, track_sequence, artist_name",
+                "release_id",
+            ),
+            (
+                "cache_metadata",
+                "new_cache_metadata",
+                "release_id, cached_at, source, last_validated",
+                "release_id",
+            ),
         ]
 
         for old, new, cols, id_col in tables:
@@ -134,9 +154,7 @@ class TestDedup:
         """Release 1002 (5 tracks) kept over 1001 (3 tracks) and 1003 (1 track)."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id"
-            )
+            cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
         assert ids == [1002]
@@ -145,9 +163,7 @@ class TestDedup:
         """Release 2002 (4 tracks) kept over 2001 (2 tracks)."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id"
-            )
+            cur.execute("SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
         assert ids == [2002]
@@ -174,13 +190,9 @@ class TestDedup:
         """Deduped releases have their child table rows removed."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT count(*) FROM release_artist WHERE release_id = 1001"
-            )
+            cur.execute("SELECT count(*) FROM release_artist WHERE release_id = 1001")
             artist_count = cur.fetchone()[0]
-            cur.execute(
-                "SELECT count(*) FROM release_track WHERE release_id = 1001"
-            )
+            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1001")
             track_count = cur.fetchone()[0]
         conn.close()
         assert artist_count == 0
@@ -190,9 +202,7 @@ class TestDedup:
         """The kept release still has its tracks."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT count(*) FROM release_track WHERE release_id = 1002"
-            )
+            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1002")
             count = cur.fetchone()[0]
         conn.close()
         assert count == 5
@@ -232,8 +242,7 @@ class TestDedup:
             """)
             fk_tables = {row[0] for row in cur.fetchall()}
         conn.close()
-        expected = {"release_artist", "release_track",
-                    "release_track_artist", "cache_metadata"}
+        expected = {"release_artist", "release_track", "release_track_artist", "cache_metadata"}
         assert expected.issubset(fk_tables)
 
     def test_total_release_count_after_dedup(self) -> None:
@@ -257,19 +266,13 @@ class TestDedupNoop:
         _drop_all_tables(conn)
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute("INSERT INTO release (id, title, master_id) VALUES (1, 'A', 100)")
+            cur.execute("INSERT INTO release (id, title, master_id) VALUES (2, 'B', 200)")
             cur.execute(
-                "INSERT INTO release (id, title, master_id) VALUES (1, 'A', 100)"
+                "INSERT INTO release_track (release_id, sequence, title) VALUES (1, 1, 'Track A')"
             )
             cur.execute(
-                "INSERT INTO release (id, title, master_id) VALUES (2, 'B', 200)"
-            )
-            cur.execute(
-                "INSERT INTO release_track (release_id, sequence, title) "
-                "VALUES (1, 1, 'Track A')"
-            )
-            cur.execute(
-                "INSERT INTO release_track (release_id, sequence, title) "
-                "VALUES (2, 1, 'Track B')"
+                "INSERT INTO release_track (release_id, sequence, title) VALUES (2, 1, 'Track B')"
             )
         conn.close()
 

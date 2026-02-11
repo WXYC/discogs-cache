@@ -36,8 +36,13 @@ class TestCreateDatabase:
         conn.close()
 
     def test_all_tables_exist(self) -> None:
-        expected = {"release", "release_artist", "release_track",
-                    "release_track_artist", "cache_metadata"}
+        expected = {
+            "release",
+            "release_artist",
+            "release_track",
+            "release_track_artist",
+            "cache_metadata",
+        }
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("""
@@ -57,8 +62,13 @@ class TestCreateDatabase:
             ("release_track_artist", {"release_id", "track_sequence", "artist_name"}),
             ("cache_metadata", {"release_id", "cached_at", "source", "last_validated"}),
         ],
-        ids=["release", "release_artist", "release_track",
-             "release_track_artist", "cache_metadata"],
+        ids=[
+            "release",
+            "release_artist",
+            "release_track",
+            "release_track_artist",
+            "cache_metadata",
+        ],
     )
     def test_table_columns(self, table: str, expected_columns: set[str]) -> None:
         conn = self._connect()
@@ -97,8 +107,12 @@ class TestCreateDatabase:
             """)
             fk_tables = {row[0] for row in cur.fetchall()}
         conn.close()
-        expected_fk_tables = {"release_artist", "release_track",
-                              "release_track_artist", "cache_metadata"}
+        expected_fk_tables = {
+            "release_artist",
+            "release_track",
+            "release_track_artist",
+            "cache_metadata",
+        }
         assert expected_fk_tables.issubset(fk_tables)
 
     def test_schema_is_idempotent(self) -> None:
@@ -121,8 +135,7 @@ class TestCreateIndexes:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
             # Insert minimal data so indexes have something to work with
             cur.execute(
-                "INSERT INTO release (id, title) VALUES (1, 'Test Album') "
-                "ON CONFLICT DO NOTHING"
+                "INSERT INTO release (id, title) VALUES (1, 'Test Album') ON CONFLICT DO NOTHING"
             )
             cur.execute(
                 "INSERT INTO release_artist (release_id, artist_name, extra) "
