@@ -14,17 +14,18 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 1. **Download** Discogs monthly data dumps (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
 2. **Convert** XML to CSV using [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) (not a PyPI package; must be cloned separately)
 3. **Fix newlines** in CSV fields (`scripts/fix_csv_newlines.py`)
-4. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`) -- ~70% data reduction
-5. **Create schema** (`schema/create_database.sql`)
-6. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
-7. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
-8. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
-9. **Prune** to library matches (`scripts/verify_cache.py --prune`) -- ~89% data reduction (3 GB -> 340 MB)
-10. **Vacuum** to reclaim disk space (`VACUUM FULL`)
+4. **Enrich** `library_artists.txt` with WXYC cross-references (`scripts/enrich_library_artists.py`, optional)
+5. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`) -- ~70% data reduction
+6. **Create schema** (`schema/create_database.sql`)
+7. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
+8. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
+9. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
+10. **Prune** to library matches (`scripts/verify_cache.py --prune`) -- ~89% data reduction (3 GB -> 340 MB)
+11. **Vacuum** to reclaim disk space (`VACUUM FULL`)
 
 `scripts/run_pipeline.py` supports two modes:
-- `--xml` mode: runs steps 2-10 (XML conversion through vacuum)
-- `--csv-dir` mode: runs steps 5-10 (database build from pre-filtered CSVs)
+- `--xml` mode: runs steps 2-11 (XML conversion through vacuum)
+- `--csv-dir` mode: runs steps 6-11 (database build from pre-filtered CSVs)
 
 Step 1 (download) is always manual.
 
@@ -54,7 +55,8 @@ docker compose up db -d     # just the database (for tests)
 
 ### Key Files
 
-- `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-10, --csv-dir for steps 5-10)
+- `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-11, --csv-dir for steps 6-11)
+- `scripts/enrich_library_artists.py` -- Enrich artist list with WXYC cross-references (pymysql)
 - `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists
 - `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
 - `scripts/dedup_releases.py` -- Deduplicate releases by master_id (copy-swap with `DROP CASCADE`)
@@ -86,12 +88,15 @@ pytest tests/unit/ -v
 DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
   pytest -m postgres -v
 
+# MySQL integration tests (needs WXYC MySQL on port 3307)
+pytest -m mysql -v
+
 # E2E tests (runs full pipeline as subprocess against test Postgres)
 DATABASE_URL_TEST=postgresql://discogs:discogs@localhost:5433/postgres \
   pytest -m e2e -v
 ```
 
-Markers: `postgres` (needs PostgreSQL), `e2e` (full pipeline), `integration` (needs library.db). Integration and E2E tests are excluded from the default `pytest` run via `addopts` in `pyproject.toml`.
+Markers: `postgres` (needs PostgreSQL), `mysql` (needs WXYC MySQL), `e2e` (full pipeline), `integration` (needs library.db). Integration and E2E tests are excluded from the default `pytest` run via `addopts` in `pyproject.toml`.
 
 Test fixtures are in `tests/fixtures/` (CSV files, library.db, library_artists.txt). Regenerate with `python tests/fixtures/create_fixtures.py`.
 
