@@ -40,8 +40,26 @@ class TestNormalizeArtist:
             ("RADIOHEAD", "radiohead"),
             ("  Mixed Case  ", "mixed case"),
             ("", ""),
+            ("Björk", "bjork"),
+            ("Sigur Rós", "sigur ros"),
+            ("Motörhead", "motorhead"),
+            ("Hüsker Dü", "husker du"),
+            ("Café Tacvba", "cafe tacvba"),
+            ("Zoé", "zoe"),
         ],
-        ids=["lowercase", "strip-spaces", "all-caps", "mixed-case-strip", "empty"],
+        ids=[
+            "lowercase",
+            "strip-spaces",
+            "all-caps",
+            "mixed-case-strip",
+            "empty",
+            "bjork",
+            "sigur-ros",
+            "motorhead",
+            "husker-du",
+            "cafe-tacvba",
+            "zoe",
+        ],
     )
     def test_normalize(self, raw: str, expected: str) -> None:
         assert normalize_artist(raw) == expected
