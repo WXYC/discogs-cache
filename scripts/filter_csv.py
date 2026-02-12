@@ -13,6 +13,7 @@ Usage:
 import csv
 import logging
 import sys
+import unicodedata
 from pathlib import Path
 
 logging.basicConfig(
@@ -34,8 +35,13 @@ RELEASE_ID_FILES = [
 
 
 def normalize_artist(name: str) -> str:
-    """Normalize artist name for matching."""
-    return name.lower().strip()
+    """Normalize artist name for matching.
+
+    Strips diacritics so that Discogs "Björk" matches library "Bjork".
+    """
+    nfkd = unicodedata.normalize("NFKD", name)
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return stripped.lower().strip()
 
 
 def load_library_artists(path: Path) -> set[str]:
