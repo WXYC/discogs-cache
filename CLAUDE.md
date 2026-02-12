@@ -109,3 +109,16 @@ Test fixtures are in `tests/fixtures/` (CSV files, library.db, library_artists.t
 ## Pipeline Lifecycle
 
 This pipeline runs monthly (or when Discogs publishes new data dumps). It has a completely different lifecycle from the request-handling services that consume its output.
+
+## Development Practices
+
+### TDD (Required)
+
+All code changes in this repo follow test-driven development. This is not optional.
+
+1. **Red**: Write a failing test that describes the desired behavior. Run the test and confirm it fails for the right reason.
+2. **Green**: Write the minimum implementation to make the test pass. Run the test and confirm it passes.
+3. **Refactor**: Look for opportunities to improve the code while keeping tests green. Re-run tests after each change.
+4. **Repeat**: Continue the cycle until the feature is complete.
+
+**Key principle**: No production code without a failing test first.
