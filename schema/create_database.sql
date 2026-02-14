@@ -30,8 +30,7 @@ CREATE TABLE IF NOT EXISTS release (
 CREATE TABLE IF NOT EXISTS release_artist (
     release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
     artist_name     text NOT NULL,
-    extra           integer DEFAULT 0, -- 0 = main artist, 1 = extra credit
-    UNIQUE (release_id, artist_name)
+    extra           integer DEFAULT 0  -- 0 = main artist, 1 = extra credit
 );
 
 -- Tracks on releases
@@ -47,8 +46,7 @@ CREATE TABLE IF NOT EXISTS release_track (
 CREATE TABLE IF NOT EXISTS release_track_artist (
     release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
     track_sequence  integer NOT NULL,
-    artist_name     text NOT NULL,
-    UNIQUE (release_id, track_sequence, artist_name)
+    artist_name     text NOT NULL
 );
 
 -- ============================================

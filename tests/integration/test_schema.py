@@ -115,6 +115,24 @@ class TestCreateDatabase:
         }
         assert expected_fk_tables.issubset(fk_tables)
 
+    def test_no_unique_constraints_on_child_tables(self) -> None:
+        """Child tables must not have UNIQUE constraints (Python-level dedup handles this).
+
+        UNIQUE constraints on text columns cause btree overflow when artist_name
+        exceeds ~900 bytes. Dedup is handled by import_csv.py's unique_key filtering.
+        """
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT tc.table_name, tc.constraint_name
+                FROM information_schema.table_constraints tc
+                WHERE tc.constraint_type = 'UNIQUE'
+                  AND tc.table_name IN ('release_artist', 'release_track_artist')
+            """)
+            unique_constraints = cur.fetchall()
+        conn.close()
+        assert unique_constraints == [], f"Unexpected UNIQUE constraints: {unique_constraints}"
+
     def test_schema_is_idempotent(self) -> None:
         """Running the schema twice doesn't error (IF NOT EXISTS)."""
         conn = psycopg.connect(self.db_url, autocommit=True)
