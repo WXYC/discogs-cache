@@ -16,9 +16,9 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 3. **Fix newlines** in CSV fields (`scripts/fix_csv_newlines.py`)
 4. **Enrich** `library_artists.txt` with WXYC cross-references (`scripts/enrich_library_artists.py`, optional)
 5. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`) -- ~70% data reduction
-6. **Create schema** (`schema/create_database.sql`)
+6. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`)
 7. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
-8. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
+8. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
 9. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
 10. **Prune or Copy-to** -- one of:
     - `--prune`: delete non-matching releases in place (~89% data reduction, 3 GB -> 340 MB)
@@ -41,15 +41,16 @@ The `release` table includes a `master_id` column used during import and dedup. 
 
 The SQL files in `schema/` define the contract between this ETL pipeline and all consumers:
 
-- `schema/create_database.sql` -- Tables: `release`, `release_artist`, `release_track`, `release_track_artist`, `cache_metadata`
-- `schema/create_indexes.sql` -- Trigram GIN indexes for fuzzy text search (pg_trgm)
+- `schema/create_database.sql` -- Tables: `release`, `release_artist`, `release_track`, `release_track_artist`, `cache_metadata`; extensions: pg_trgm, unaccent
+- `schema/create_functions.sql` -- `f_unaccent()` immutable wrapper for accent-insensitive index expressions
+- `schema/create_indexes.sql` -- Trigram GIN indexes for accent-insensitive fuzzy text search (pg_trgm + unaccent)
 
 Consumers connect via `DATABASE_URL_DISCOGS` environment variable.
 
 ### Docker Compose
 
 `docker-compose.yml` provides a self-contained environment:
-- **`db`** service: PostgreSQL 16 with pg_trgm, port 5433:5432
+- **`db`** service: PostgreSQL 16 with pg_trgm + unaccent, port 5433:5432
 - **`pipeline`** service: runs `scripts/run_pipeline.py` against the db
 
 ```bash

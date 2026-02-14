@@ -462,11 +462,12 @@ def _run_database_build(
     # Step 4: Wait for Postgres
     wait_for_postgres(db_url)
 
-    # Step 5: Create schema
+    # Step 5: Create schema and functions
     if state and state.is_completed("create_schema"):
         logger.info("Skipping create_schema (already completed)")
     else:
         run_sql_file(db_url, SCHEMA_DIR / "create_database.sql")
+        run_sql_file(db_url, SCHEMA_DIR / "create_functions.sql")
         if state:
             state.mark_completed("create_schema")
             _save_state()

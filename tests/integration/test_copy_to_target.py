@@ -55,12 +55,13 @@ pytestmark = pytest.mark.postgres
 
 
 def _fresh_import(db_url: str) -> None:
-    """Drop everything, apply schema, and import fixture CSVs."""
+    """Drop everything, apply schema and functions, and import fixture CSVs."""
     conn = psycopg.connect(db_url, autocommit=True)
     with conn.cursor() as cur:
         for table in ALL_TABLES:
             cur.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
         cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+        cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
     conn.close()
 
     conn = psycopg.connect(db_url)
