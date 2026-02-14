@@ -17,11 +17,12 @@ class TestCreateDatabase:
 
     @pytest.fixture(autouse=True)
     def _apply_schema(self, db_url):
-        """Run create_database.sql against the test database."""
+        """Run create_database.sql and create_functions.sql against the test database."""
         self.db_url = db_url
         conn = psycopg.connect(db_url, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
         conn.close()
 
     def _connect(self):
@@ -91,6 +92,23 @@ class TestCreateDatabase:
         conn.close()
         assert result is not None, "pg_trgm extension not installed"
 
+    def test_unaccent_extension_enabled(self) -> None:
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT extname FROM pg_extension WHERE extname = 'unaccent'")
+            result = cur.fetchone()
+        conn.close()
+        assert result is not None, "unaccent extension not installed"
+
+    def test_f_unaccent_function_exists(self) -> None:
+        """Immutable f_unaccent() wrapper is available and strips diacritics."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT f_unaccent('Björk')")
+            result = cur.fetchone()[0]
+        conn.close()
+        assert result == "Bjork"
+
     def test_fk_constraints_with_cascade(self) -> None:
         """Child tables have ON DELETE CASCADE foreign keys to release."""
         conn = self._connect()
@@ -146,11 +164,12 @@ class TestCreateIndexes:
 
     @pytest.fixture(autouse=True)
     def _apply_schema_and_data(self, db_url):
-        """Set up schema and insert minimal sample data for index creation."""
+        """Set up schema, functions, and insert minimal sample data for index creation."""
         self.db_url = db_url
         conn = psycopg.connect(db_url, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
             # Insert minimal data so indexes have something to work with
             cur.execute(
                 "INSERT INTO release (id, title) VALUES (1, 'Test Album') ON CONFLICT DO NOTHING"
@@ -204,3 +223,23 @@ class TestCreateIndexes:
             "idx_release_title_trgm",
         }
         assert expected.issubset(indexes)
+
+    def test_trigram_indexes_use_unaccent(self) -> None:
+        """All four trigram indexes use f_unaccent() for accent-insensitive matching."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
+            sql = sql.replace(" CONCURRENTLY", "")
+            cur.execute(sql)
+
+            cur.execute("""
+                SELECT indexname, indexdef FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname LIKE '%trgm%'
+            """)
+            rows = cur.fetchall()
+        conn.close()
+        for indexname, indexdef in rows:
+            assert "f_unaccent" in indexdef, (
+                f"Index {indexname} should use f_unaccent(): {indexdef}"
+            )

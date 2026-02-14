@@ -13,6 +13,9 @@
 -- Enable trigram extension for fuzzy text search
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- Enable unaccent extension for accent-insensitive search
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
 -- ============================================
 -- Core tables
 -- ============================================

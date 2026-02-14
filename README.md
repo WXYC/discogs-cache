@@ -7,13 +7,13 @@ ETL pipeline for building a PostgreSQL cache of Discogs release data, filtered t
 The pipeline processes monthly Discogs data dumps (~40 GB XML) into a focused PostgreSQL database (~3 GB) containing only releases by artists in the WXYC library catalog. This provides:
 
 - Fast local lookups instead of rate-limited Discogs API calls
-- Trigram fuzzy text search via pg_trgm
+- Accent-insensitive trigram fuzzy text search via pg_trgm + unaccent
 - Shared data resource for multiple consuming services
 
 ## Prerequisites
 
 - Python 3.11+
-- PostgreSQL with the `pg_trgm` extension (or use [Docker Compose](#docker-compose))
+- PostgreSQL with the `pg_trgm` and `unaccent` extensions (or use [Docker Compose](#docker-compose))
 - Discogs monthly data dump (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
 - [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) -- clone separately; not a PyPI package
 - `library_artists.txt` and `library.db` (produced by request-parser's library sync)
@@ -34,9 +34,9 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 | 2. Fix newlines | `scripts/fix_csv_newlines.py` | Clean embedded newlines in CSV fields |
 | 2.5. Enrich | `scripts/enrich_library_artists.py` | Enrich artist list with cross-references (optional) |
 | 3. Filter | `scripts/filter_csv.py` | Keep only library artists (~70% reduction) |
-| 4. Create schema | `schema/create_database.sql` | Set up tables and constraints |
+| 4. Create schema | `schema/create_database.sql`, `schema/create_functions.sql` | Set up tables, extensions, and functions |
 | 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
-| 6. Create indexes | `schema/create_indexes.sql` | Trigram GIN indexes for fuzzy search |
+| 6. Create indexes | `schema/create_indexes.sql` | Accent-insensitive trigram GIN indexes for fuzzy search |
 | 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (most tracks) |
 | 8. Prune/Copy | `scripts/verify_cache.py` | Remove non-library releases or copy matches to target DB |
 | 9. Vacuum | `VACUUM FULL` | Reclaim disk space |
@@ -162,8 +162,9 @@ python scripts/fix_csv_newlines.py /path/to/raw/release.csv /path/to/cleaned/rel
 # 3. Filter to library artists
 python scripts/filter_csv.py /path/to/library_artists.txt /path/to/cleaned/ /path/to/filtered/
 
-# 4. Create schema
+# 4. Create schema and functions
 psql -d discogs -f schema/create_database.sql
+psql -d discogs -f schema/create_functions.sql
 
 # 5. Import CSVs
 python scripts/import_csv.py /path/to/filtered/ [database_url]
@@ -201,7 +202,7 @@ The schema files in `schema/` define the shared contract between this ETL pipeli
 ### Indexes
 
 - Foreign key indexes on all child tables
-- Trigram GIN indexes (`pg_trgm`) on `title` and `artist_name` columns for fuzzy text search
+- Accent-insensitive trigram GIN indexes (`pg_trgm` + `unaccent`) on `title` and `artist_name` columns for fuzzy text search. Uses an immutable `f_unaccent()` wrapper to enable index expressions with `lower(f_unaccent(column))`.
 - Cache metadata indexes for freshness queries
 
 ### Consumer Integration

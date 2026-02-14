@@ -123,6 +123,7 @@ class TestTrigramIndexesExist:
         conn = psycopg.connect(db_url, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
             sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
             sql = sql.replace(" CONCURRENTLY", "")
             cur.execute(sql)
@@ -168,6 +169,7 @@ class TestInferPipelineState:
         conn = psycopg.connect(db_url, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
             cur.execute("INSERT INTO release (id, title) VALUES (1, 'Test')")
             sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
             sql = sql.replace(" CONCURRENTLY", "")
@@ -186,6 +188,7 @@ class TestInferPipelineState:
         conn = psycopg.connect(db_url, autocommit=True)
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
             cur.execute("INSERT INTO release (id, title) VALUES (1, 'Test')")
             sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
             sql = sql.replace(" CONCURRENTLY", "")

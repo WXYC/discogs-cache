@@ -57,11 +57,12 @@ def _drop_all_tables(conn) -> None:
 
 
 def _fresh_import(db_url: str) -> None:
-    """Drop everything, apply schema, and import fixture CSVs."""
+    """Drop everything, apply schema and functions, and import fixture CSVs."""
     conn = psycopg.connect(db_url, autocommit=True)
     _drop_all_tables(conn)
     with conn.cursor() as cur:
         cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+        cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
     conn.close()
 
     conn = psycopg.connect(db_url)

@@ -141,14 +141,15 @@ def add_constraints_and_indexes(conn) -> None:
         "CREATE INDEX idx_release_artist_release_id ON release_artist(release_id)",
         "CREATE INDEX idx_release_track_release_id ON release_track(release_id)",
         "CREATE INDEX idx_release_track_artist_release_id ON release_track_artist(release_id)",
-        # Trigram indexes for fuzzy search
+        # Trigram indexes for fuzzy search (accent-insensitive via f_unaccent)
         "CREATE INDEX idx_release_track_title_trgm ON release_track "
-        "USING gin (lower(title) gin_trgm_ops)",
+        "USING gin (lower(f_unaccent(title)) gin_trgm_ops)",
         "CREATE INDEX idx_release_artist_name_trgm ON release_artist "
-        "USING gin (lower(artist_name) gin_trgm_ops)",
+        "USING gin (lower(f_unaccent(artist_name)) gin_trgm_ops)",
         "CREATE INDEX idx_release_track_artist_name_trgm ON release_track_artist "
-        "USING gin (lower(artist_name) gin_trgm_ops)",
-        "CREATE INDEX idx_release_title_trgm ON release USING gin (lower(title) gin_trgm_ops)",
+        "USING gin (lower(f_unaccent(artist_name)) gin_trgm_ops)",
+        "CREATE INDEX idx_release_title_trgm ON release "
+        "USING gin (lower(f_unaccent(title)) gin_trgm_ops)",
         # Cache metadata indexes
         "CREATE INDEX idx_cache_metadata_cached_at ON cache_metadata(cached_at)",
         "CREATE INDEX idx_cache_metadata_source ON cache_metadata(source)",

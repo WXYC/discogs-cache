@@ -728,15 +728,17 @@ def _create_target_schema(target_url: str) -> None:
 
 
 def _create_target_indexes(target_url: str) -> None:
-    """Create indexes on the target database (without CONCURRENTLY)."""
-    sql_text = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
-    sql_text = sql_text.replace(" CONCURRENTLY", "")
+    """Create functions and indexes on the target database (without CONCURRENTLY)."""
+    functions_sql = SCHEMA_DIR.joinpath("create_functions.sql").read_text()
+    indexes_sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
+    indexes_sql = indexes_sql.replace(" CONCURRENTLY", "")
 
     conn = psycopg.connect(target_url, autocommit=True)
     with conn.cursor() as cur:
-        cur.execute(sql_text)
+        cur.execute(functions_sql)
+        cur.execute(indexes_sql)
     conn.close()
-    logger.info("Created indexes on target database")
+    logger.info("Created functions and indexes on target database")
 
 
 def copy_releases_to_target(
