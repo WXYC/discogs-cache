@@ -84,6 +84,7 @@ def ensure_dedup_ids(conn) -> int:
         )
 
     with conn.cursor() as cur:
+        # track_count_join is built from trusted internal constants, not user input
         cur.execute(f"""
             CREATE UNLOGGED TABLE dedup_delete_ids AS
             SELECT id AS release_id FROM (
