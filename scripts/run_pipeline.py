@@ -446,7 +446,8 @@ def _run_database_build(
     state: PipelineState | None = None,
     state_file: Path | None = None,
 ) -> None:
-    """Steps 4-9: database schema, import, indexes, dedup, prune/copy-to, vacuum.
+    """Steps 4-11: schema, base import, base indexes, dedup, track import,
+    track indexes, prune/copy-to, vacuum.
 
     When *state* is provided, completed steps are skipped and progress
     is saved to *state_file* after each step.
@@ -472,19 +473,19 @@ def _run_database_build(
             state.mark_completed("create_schema")
             _save_state()
 
-    # Step 6: Import CSVs
+    # Step 6: Import base CSVs (release, release_artist, artwork, cache_metadata, track counts)
     if state and state.is_completed("import_csv"):
         logger.info("Skipping import_csv (already completed)")
     else:
         run_step(
-            "Import CSVs",
-            [python, str(SCRIPT_DIR / "import_csv.py"), str(csv_dir), db_url],
+            "Import base CSVs",
+            [python, str(SCRIPT_DIR / "import_csv.py"), "--base-only", str(csv_dir), db_url],
         )
         if state:
             state.mark_completed("import_csv")
             _save_state()
 
-    # Step 7: Create trigram indexes (strip CONCURRENTLY for fresh DB)
+    # Step 7: Create base trigram indexes (strip CONCURRENTLY for fresh DB)
     if state and state.is_completed("create_indexes"):
         logger.info("Skipping create_indexes (already completed)")
     else:
@@ -505,7 +506,28 @@ def _run_database_build(
             state.mark_completed("dedup")
             _save_state()
 
-    # Step 9: Prune or copy-to (optional)
+    # Step 9: Import tracks (filtered to surviving release IDs)
+    if state and state.is_completed("import_tracks"):
+        logger.info("Skipping import_tracks (already completed)")
+    else:
+        run_step(
+            "Import tracks",
+            [python, str(SCRIPT_DIR / "import_csv.py"), "--tracks-only", str(csv_dir), db_url],
+        )
+        if state:
+            state.mark_completed("import_tracks")
+            _save_state()
+
+    # Step 10: Create track indexes (FK constraints, FK indexes, trigram indexes)
+    if state and state.is_completed("create_track_indexes"):
+        logger.info("Skipping create_track_indexes (already completed)")
+    else:
+        run_sql_file(db_url, SCHEMA_DIR / "create_track_indexes.sql", strip_concurrently=True)
+        if state:
+            state.mark_completed("create_track_indexes")
+            _save_state()
+
+    # Step 11: Prune or copy-to (optional)
     if state and state.is_completed("prune"):
         logger.info("Skipping prune/copy-to (already completed)")
     elif library_db and target_db_url:
@@ -537,7 +559,7 @@ def _run_database_build(
             state.mark_completed("prune")
             _save_state()
 
-    # Step 10: Vacuum (on target DB if using copy-to, otherwise source)
+    # Step 12: Vacuum (on target DB if using copy-to, otherwise source)
     vacuum_db = target_db_url if target_db_url else db_url
     if state and state.is_completed("vacuum"):
         logger.info("Skipping vacuum (already completed)")
@@ -547,7 +569,7 @@ def _run_database_build(
             state.mark_completed("vacuum")
             _save_state()
 
-    # Step 11: Report
+    # Step 13: Report
     report_sizes(vacuum_db)
 
 

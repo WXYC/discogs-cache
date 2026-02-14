@@ -15,8 +15,14 @@ _ic = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_ic)
 
 extract_year = _ic.extract_year
+count_tracks_from_csv = _ic.count_tracks_from_csv
 TABLES = _ic.TABLES
+BASE_TABLES = _ic.BASE_TABLES
+TRACK_TABLES = _ic.TRACK_TABLES
 TableConfig = _ic.TableConfig
+
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
+CSV_DIR = FIXTURES_DIR / "csv"
 
 
 # ---------------------------------------------------------------------------
@@ -171,3 +177,68 @@ class TestColumnHeaderDetection:
             assert col in headers, (
                 f"Expected column {col!r} not in release_artist.csv headers: {headers}"
             )
+
+
+# ---------------------------------------------------------------------------
+# count_tracks_from_csv
+# ---------------------------------------------------------------------------
+
+
+class TestCountTracksFromCsv:
+    """Count tracks per release_id from a release_track CSV file."""
+
+    def test_counts_tracks_per_release(self) -> None:
+        """Returns a dict mapping release_id -> track count."""
+        csv_path = CSV_DIR / "release_track.csv"
+        counts = count_tracks_from_csv(csv_path)
+        # Release 1002 has 5 tracks in the fixture data
+        assert counts[1002] == 5
+
+    def test_all_releases_counted(self) -> None:
+        """Every release_id in the CSV has an entry."""
+        csv_path = CSV_DIR / "release_track.csv"
+        counts = count_tracks_from_csv(csv_path)
+        assert len(counts) == 15
+
+    def test_returns_empty_for_nonexistent_file(self, tmp_path) -> None:
+        """Returns empty dict when file is empty (only header)."""
+        csv_path = tmp_path / "empty.csv"
+        csv_path.write_text("release_id,sequence,position,title,duration\n")
+        counts = count_tracks_from_csv(csv_path)
+        assert counts == {}
+
+    def test_skips_invalid_release_ids(self, tmp_path) -> None:
+        """Rows with non-integer release_id are skipped."""
+        csv_path = tmp_path / "bad.csv"
+        csv_path.write_text(
+            "release_id,sequence,position,title,duration\n"
+            "abc,1,A1,Track 1,3:00\n"
+            "1,1,A1,Track 1,3:00\n"
+        )
+        counts = count_tracks_from_csv(csv_path)
+        assert counts == {1: 1}
+
+
+# ---------------------------------------------------------------------------
+# BASE_TABLES / TRACK_TABLES split
+# ---------------------------------------------------------------------------
+
+
+class TestTableSplit:
+    """TABLES is the union of BASE_TABLES and TRACK_TABLES."""
+
+    def test_tables_is_union(self) -> None:
+        assert TABLES == BASE_TABLES + TRACK_TABLES
+
+    def test_base_tables_are_release_and_release_artist(self) -> None:
+        names = [t["table"] for t in BASE_TABLES]
+        assert names == ["release", "release_artist"]
+
+    def test_track_tables_are_release_track_and_release_track_artist(self) -> None:
+        names = [t["table"] for t in TRACK_TABLES]
+        assert names == ["release_track", "release_track_artist"]
+
+    def test_no_overlap(self) -> None:
+        base_names = {t["table"] for t in BASE_TABLES}
+        track_names = {t["table"] for t in TRACK_TABLES}
+        assert base_names.isdisjoint(track_names)

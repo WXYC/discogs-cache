@@ -27,8 +27,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _track_count_table_exists(conn) -> bool:
+    """Return True if the release_track_count pre-computed table exists."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'release_track_count'
+            )
+        """)
+        return cur.fetchone()[0]
+
+
 def ensure_dedup_ids(conn) -> int:
     """Ensure dedup_delete_ids table exists. Create if needed.
+
+    Uses release_track_count table for track counts if available (v2 pipeline),
+    falling back to counting from release_track directly (v1 / standalone usage).
 
     Returns number of IDs to delete.
     """
@@ -48,9 +63,28 @@ def ensure_dedup_ids(conn) -> int:
         logger.info(f"dedup_delete_ids already exists with {count:,} IDs")
         return count
 
-    logger.info("Creating dedup_delete_ids from ROW_NUMBER query...")
+    # Choose track count source: pre-computed table or live count from release_track
+    use_precomputed = _track_count_table_exists(conn)
+
+    if use_precomputed:
+        logger.info(
+            "Creating dedup_delete_ids from ROW_NUMBER query (using pre-computed track counts)..."
+        )
+        track_count_join = "JOIN release_track_count tc ON tc.release_id = r.id"
+    else:
+        logger.info(
+            "Creating dedup_delete_ids from ROW_NUMBER query (counting from release_track)..."
+        )
+        track_count_join = (
+            "JOIN ("
+            "    SELECT release_id, COUNT(*) as track_count"
+            "    FROM release_track"
+            "    GROUP BY release_id"
+            ") tc ON tc.release_id = r.id"
+        )
+
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(f"""
             CREATE UNLOGGED TABLE dedup_delete_ids AS
             SELECT id AS release_id FROM (
                 SELECT r.id, r.master_id,
@@ -59,11 +93,7 @@ def ensure_dedup_ids(conn) -> int:
                            ORDER BY tc.track_count DESC, r.id ASC
                        ) as rn
                 FROM release r
-                JOIN (
-                    SELECT release_id, COUNT(*) as track_count
-                    FROM release_track
-                    GROUP BY release_id
-                ) tc ON tc.release_id = r.id
+                {track_count_join}
                 WHERE r.master_id IS NOT NULL
             ) ranked
             WHERE rn > 1
@@ -119,34 +149,28 @@ def swap_tables(conn, old_table: str, new_table: str) -> None:
     logger.info(f"  Swapped {new_table} -> {old_table}")
 
 
-def add_constraints_and_indexes(conn) -> None:
-    """Add PK, FK constraints and indexes to the new tables."""
-    logger.info("Adding constraints and indexes...")
+def add_base_constraints_and_indexes(conn) -> None:
+    """Add PK, FK constraints and indexes to base tables (no track tables).
+
+    Called after dedup copy-swap. Track constraints are added separately
+    by create_track_indexes.sql after track import.
+    """
+    logger.info("Adding base constraints and indexes...")
     start = time.time()
 
     statements = [
         # Primary key on release
         "ALTER TABLE release ADD PRIMARY KEY (id)",
-        # FK constraints with CASCADE
+        # FK constraints with CASCADE (base tables only)
         "ALTER TABLE release_artist ADD CONSTRAINT fk_release_artist_release "
-        "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
-        "ALTER TABLE release_track ADD CONSTRAINT fk_release_track_release "
-        "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
-        "ALTER TABLE release_track_artist ADD CONSTRAINT fk_release_track_artist_release "
         "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
         "ALTER TABLE cache_metadata ADD CONSTRAINT fk_cache_metadata_release "
         "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
         "ALTER TABLE cache_metadata ADD PRIMARY KEY (release_id)",
-        # FK indexes
+        # FK indexes (base tables only)
         "CREATE INDEX idx_release_artist_release_id ON release_artist(release_id)",
-        "CREATE INDEX idx_release_track_release_id ON release_track(release_id)",
-        "CREATE INDEX idx_release_track_artist_release_id ON release_track_artist(release_id)",
-        # Trigram indexes for fuzzy search (accent-insensitive via f_unaccent)
-        "CREATE INDEX idx_release_track_title_trgm ON release_track "
-        "USING gin (lower(f_unaccent(title)) gin_trgm_ops)",
+        # Base trigram indexes for fuzzy search (accent-insensitive via f_unaccent)
         "CREATE INDEX idx_release_artist_name_trgm ON release_artist "
-        "USING gin (lower(f_unaccent(artist_name)) gin_trgm_ops)",
-        "CREATE INDEX idx_release_track_artist_name_trgm ON release_track_artist "
         "USING gin (lower(f_unaccent(artist_name)) gin_trgm_ops)",
         "CREATE INDEX idx_release_title_trgm ON release "
         "USING gin (lower(f_unaccent(title)) gin_trgm_ops)",
@@ -165,7 +189,55 @@ def add_constraints_and_indexes(conn) -> None:
             logger.info(f"    done in {time.time() - stmt_start:.1f}s")
 
     elapsed = time.time() - start
-    logger.info(f"All constraints and indexes added in {elapsed:.1f}s")
+    logger.info(f"Base constraints and indexes added in {elapsed:.1f}s")
+
+
+def add_track_constraints_and_indexes(conn) -> None:
+    """Add FK constraints and indexes to track tables.
+
+    Called after track import (post-dedup). Equivalent to running
+    create_track_indexes.sql.
+    """
+    logger.info("Adding track constraints and indexes...")
+    start = time.time()
+
+    statements = [
+        # FK constraints with CASCADE
+        "ALTER TABLE release_track ADD CONSTRAINT fk_release_track_release "
+        "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
+        "ALTER TABLE release_track_artist ADD CONSTRAINT fk_release_track_artist_release "
+        "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
+        # FK indexes
+        "CREATE INDEX idx_release_track_release_id ON release_track(release_id)",
+        "CREATE INDEX idx_release_track_artist_release_id ON release_track_artist(release_id)",
+        # Track trigram indexes for fuzzy search
+        "CREATE INDEX idx_release_track_title_trgm ON release_track "
+        "USING gin (lower(f_unaccent(title)) gin_trgm_ops)",
+        "CREATE INDEX idx_release_track_artist_name_trgm ON release_track_artist "
+        "USING gin (lower(f_unaccent(artist_name)) gin_trgm_ops)",
+    ]
+
+    with conn.cursor() as cur:
+        for i, stmt in enumerate(statements):
+            label = stmt.split("(")[0].strip() if "(" in stmt else stmt[:60]
+            logger.info(f"  [{i + 1}/{len(statements)}] {label}...")
+            stmt_start = time.time()
+            cur.execute(stmt)
+            conn.commit()
+            logger.info(f"    done in {time.time() - stmt_start:.1f}s")
+
+    elapsed = time.time() - start
+    logger.info(f"Track constraints and indexes added in {elapsed:.1f}s")
+
+
+def add_constraints_and_indexes(conn) -> None:
+    """Add PK, FK constraints and indexes to all tables.
+
+    Convenience function that calls both base and track versions.
+    Used for backward compatibility (standalone dedup with all tables present).
+    """
+    add_base_constraints_and_indexes(conn)
+    add_track_constraints_and_indexes(conn)
 
 
 def main():
@@ -178,27 +250,19 @@ def main():
     delete_count = ensure_dedup_ids(conn)
     if delete_count == 0:
         logger.info("No duplicates found, nothing to do")
+        # Clean up release_track_count if it exists
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS release_track_count")
         conn.close()
         return
 
     total_start = time.time()
 
     # Step 2: Copy each table (keeping only non-duplicate rows)
+    # Only base tables + cache_metadata (tracks are imported after dedup)
     tables = [
         ("release", "new_release", "id, title, release_year, artwork_url", "id"),
         ("release_artist", "new_release_artist", "release_id, artist_name, extra", "release_id"),
-        (
-            "release_track",
-            "new_release_track",
-            "release_id, sequence, position, title, duration",
-            "release_id",
-        ),
-        (
-            "release_track_artist",
-            "new_release_track_artist",
-            "release_id, track_sequence, artist_name",
-            "release_id",
-        ),
         (
             "cache_metadata",
             "new_cache_metadata",
@@ -210,13 +274,11 @@ def main():
     for old, new, cols, id_col in tables:
         copy_table(conn, old, new, cols, id_col)
 
-    # Step 3: Drop old tables (order matters for FK constraints)
+    # Step 3: Drop old FK constraints before swap
     logger.info("Dropping FK constraints on old tables...")
     with conn.cursor() as cur:
         for stmt in [
             "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS fk_release_artist_release",
-            "ALTER TABLE release_track DROP CONSTRAINT IF EXISTS fk_release_track_release",
-            "ALTER TABLE release_track_artist DROP CONSTRAINT IF EXISTS fk_release_track_artist_release",
             "ALTER TABLE cache_metadata DROP CONSTRAINT IF EXISTS fk_cache_metadata_release",
         ]:
             cur.execute(stmt)
@@ -226,13 +288,14 @@ def main():
     for old, new, _, _ in tables:
         swap_tables(conn, old, new)
 
-    # Step 5: Add constraints and indexes
-    add_constraints_and_indexes(conn)
+    # Step 5: Add base constraints and indexes
+    add_base_constraints_and_indexes(conn)
 
     # Step 6: Cleanup
     logger.info("Cleaning up...")
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+        cur.execute("DROP TABLE IF EXISTS release_track_count")
 
     # Step 7: Report
     with conn.cursor() as cur:

@@ -1,35 +1,23 @@
--- Create trigram indexes for fuzzy text search
--- Run AFTER data import: psql -U postgres -d discogs -f 05-create-indexes.sql
+-- Create base trigram indexes for fuzzy text search
+-- Run AFTER base data import (release, release_artist).
+-- Track-related indexes are in create_track_indexes.sql (run after track import).
 --
 -- These indexes enable fast fuzzy matching using pg_trgm extension.
--- Index creation on large tables can take 10-30 minutes.
 
 -- Ensure extension is loaded
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ============================================
--- Trigram indexes for fuzzy text search
+-- Base trigram indexes for fuzzy text search
 -- ============================================
 
--- 1. Track title search: "Find releases containing track 'Blue Monday'"
---    Used by: search_releases_by_track()
---    Query pattern: WHERE lower(f_unaccent(title)) % $1 OR lower(f_unaccent(title)) ILIKE ...
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_release_track_title_trgm
-ON release_track USING GIN (lower(f_unaccent(title)) gin_trgm_ops);
-
--- 2. Artist name search on releases: "Find releases by 'New Order'"
+-- 1. Artist name search on releases: "Find releases by 'New Order'"
 --    Used by: search_releases_by_track() artist filter
 --    Query pattern: WHERE lower(f_unaccent(artist_name)) % $1
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_release_artist_name_trgm
 ON release_artist USING GIN (lower(f_unaccent(artist_name)) gin_trgm_ops);
 
--- 3. Track artist search: "Find compilation tracks by 'Joy Division'"
---    Used by: validate_track_on_release() for compilations
---    Query pattern: WHERE lower(f_unaccent(artist_name)) % $1
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_release_track_artist_name_trgm
-ON release_track_artist USING GIN (lower(f_unaccent(artist_name)) gin_trgm_ops);
-
--- 4. Release title search: "Find releases named 'Power, Corruption & Lies'"
+-- 2. Release title search: "Find releases named 'Power, Corruption & Lies'"
 --    Used by: get_release searches
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_release_title_trgm
 ON release USING GIN (lower(f_unaccent(title)) gin_trgm_ops);
@@ -48,6 +36,6 @@ ON release USING GIN (lower(f_unaccent(title)) gin_trgm_ops);
 
 -- Test trigram search (should use index)
 -- EXPLAIN ANALYZE
--- SELECT * FROM release_track
--- WHERE lower(f_unaccent(title)) % 'blue monday'
+-- SELECT * FROM release_artist
+-- WHERE lower(f_unaccent(artist_name)) % 'new order'
 -- LIMIT 10;
