@@ -68,6 +68,7 @@ TABLES: list[TableConfig] = [
         "db_columns": ["release_id", "artist_name", "extra"],
         "required": ["release_id"],
         "transforms": {},
+        "unique_key": ["release_id", "artist_name"],
     },
     {
         "csv_file": "release_track.csv",
@@ -84,6 +85,7 @@ TABLES: list[TableConfig] = [
         "db_columns": ["release_id", "track_sequence", "artist_name"],
         "required": ["release_id", "track_sequence"],
         "transforms": {},
+        "unique_key": ["release_id", "track_sequence", "artist_name"],
     },
 ]
 
@@ -96,16 +98,25 @@ def import_csv(
     db_columns: list[str],
     required_columns: list[str],
     transforms: dict,
+    unique_key: list[str] | None = None,
 ) -> int:
     """Import a CSV file into a table, selecting only needed columns.
 
     Reads the CSV header to find column indices, extracts only the columns
     listed in csv_columns, applies any transforms, and writes to the DB
     using the corresponding db_columns names.
+
+    If unique_key is provided, duplicate rows (by those CSV columns) are
+    skipped, keeping the first occurrence.
     """
     logger.info(f"Importing {csv_path.name} into {table}...")
 
     db_col_list = ", ".join(db_columns)
+
+    # Build unique key column indices for dedup
+    unique_key_indices: list[int] | None = None
+    if unique_key:
+        unique_key_indices = [csv_columns.index(col) for col in unique_key]
 
     with open(csv_path, encoding="utf-8", errors="replace") as f:
         reader = csv.DictReader(f)
@@ -122,11 +133,13 @@ def import_csv(
 
         # Find indices of required columns for null checking
         required_set = set(required_columns)
+        seen: set[tuple[str | None, ...]] = set()
 
         with conn.cursor() as cur:
             with cur.copy(f"COPY {table} ({db_col_list}) FROM STDIN") as copy:
                 count = 0
                 skipped = 0
+                dupes = 0
                 for row in reader:
                     # Extract only the columns we need
                     values: list[str | None] = []
@@ -151,6 +164,14 @@ def import_csv(
                         skipped += 1
                         continue
 
+                    # Dedup by unique key
+                    if unique_key_indices is not None:
+                        key = tuple(values[i] for i in unique_key_indices)
+                        if key in seen:
+                            dupes += 1
+                            continue
+                        seen.add(key)
+
                     copy.write_row(values)
                     count += 1
 
@@ -158,10 +179,12 @@ def import_csv(
                         logger.info(f"  {count:,} rows...")
 
     conn.commit()
+    parts = [f"Imported {count:,} rows"]
     if skipped > 0:
-        logger.info(f"  Imported {count:,} rows (skipped {skipped:,} with null required fields)")
-    else:
-        logger.info(f"  Imported {count:,} rows")
+        parts.append(f"skipped {skipped:,} with null required fields")
+    if dupes > 0:
+        parts.append(f"skipped {dupes:,} duplicates")
+    logger.info(f"  {', '.join(parts)}")
     return count
 
 
@@ -268,6 +291,7 @@ def main():
             table_config["db_columns"],
             table_config["required"],
             table_config["transforms"],
+            unique_key=table_config.get("unique_key"),
         )
         total += count
 

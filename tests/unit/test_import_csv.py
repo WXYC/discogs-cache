@@ -121,6 +121,22 @@ class TestTablesConfig:
                 f"{required_keys - table_config.keys()}"
             )
 
+    def test_tables_with_unique_constraints_have_unique_key(self) -> None:
+        """Tables with unique constraints must specify unique_key for dedup during import."""
+        tables_needing_dedup = {"release_artist", "release_track_artist"}
+        for table_config in TABLES:
+            if table_config["table"] in tables_needing_dedup:
+                assert "unique_key" in table_config, (
+                    f"{table_config['table']} needs unique_key for dedup"
+                )
+                # unique_key columns must be a subset of csv_columns
+                key_set = set(table_config["unique_key"])
+                csv_set = set(table_config["csv_columns"])
+                assert key_set.issubset(csv_set), (
+                    f"unique_key {key_set} not subset of csv_columns {csv_set} "
+                    f"in {table_config['table']}"
+                )
+
 
 # ---------------------------------------------------------------------------
 # Column header detection
