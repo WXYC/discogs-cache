@@ -278,12 +278,10 @@ class TestDedup:
         expected = {"release_artist", "cache_metadata"}
         assert expected.issubset(fk_tables)
 
-    def test_track_tables_empty_before_track_import(self) -> None:
-        """Track tables are empty after base-only dedup (verified via count of
-        deduped releases -- 1001, 1003, 2001 should have no tracks)."""
+    def test_deduped_release_has_no_tracks(self) -> None:
+        """Releases removed by dedup have no tracks (not imported for them)."""
         conn = self._connect()
         with conn.cursor() as cur:
-            # Deduped release 1001 should have no tracks (it was deleted)
             cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1001")
             count = cur.fetchone()[0]
         conn.close()
