@@ -20,12 +20,16 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 7. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
 8. **Create indexes** including trigram GIN indexes (`schema/create_indexes.sql`)
 9. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
-10. **Prune** to library matches (`scripts/verify_cache.py --prune`) -- ~89% data reduction (3 GB -> 340 MB)
+10. **Prune or Copy-to** -- one of:
+    - `--prune`: delete non-matching releases in place (~89% data reduction, 3 GB -> 340 MB)
+    - `--copy-to`/`--target-db-url`: copy matched releases to a separate database, preserving the full import
 11. **Vacuum** to reclaim disk space (`VACUUM FULL`)
 
 `scripts/run_pipeline.py` supports two modes:
 - `--xml` mode: runs steps 2-11 (XML conversion through vacuum)
 - `--csv-dir` mode: runs steps 6-11 (database build from pre-filtered CSVs)
+
+Both modes support `--target-db-url` to copy matched releases to a separate database instead of pruning in place, and `--resume` (csv-dir only) to skip already-completed steps.
 
 Step 1 (download) is always manual.
 
@@ -60,10 +64,12 @@ docker compose up db -d     # just the database (for tests)
 - `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists
 - `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
 - `scripts/dedup_releases.py` -- Deduplicate releases by master_id (copy-swap with `DROP CASCADE`)
-- `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification
+- `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB
 - `scripts/csv_to_tsv.py` -- CSV to TSV conversion utility
 - `scripts/fix_csv_newlines.py` -- Fix multiline CSV fields
 - `lib/matching.py` -- Compilation detection utility
+- `lib/pipeline_state.py` -- Pipeline state tracking for resumable runs
+- `lib/db_introspect.py` -- Database introspection for inferring pipeline state on resume
 
 ### External Inputs
 

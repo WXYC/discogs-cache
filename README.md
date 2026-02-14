@@ -38,7 +38,7 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 | 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
 | 6. Create indexes | `schema/create_indexes.sql` | Trigram GIN indexes for fuzzy search |
 | 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (most tracks) |
-| 8. Prune | `scripts/verify_cache.py --prune` | Remove non-library releases (~89% reduction) |
+| 8. Prune/Copy | `scripts/verify_cache.py` | Remove non-library releases or copy matches to target DB |
 | 9. Vacuum | `VACUUM FULL` | Reclaim disk space |
 
 Step 2.5 generates `library_artists.txt` from `library.db` and optionally enriches it with alternate artist names and cross-references from the WXYC MySQL catalog database. This reduces false negatives at the filtering stage for artists known by multiple names (e.g., "Body Count" filed under Ice-T).
@@ -97,6 +97,56 @@ python scripts/run_pipeline.py \
 - `--library-db` is optional; if omitted, the prune step is skipped
 - `--database-url` defaults to `DATABASE_URL` env var or `postgresql://localhost:5432/discogs`
 
+### Copy to Target Database
+
+Instead of pruning releases in place (which destroys the full imported dataset), you can copy only matched releases to a separate target database:
+
+```bash
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/filtered/ \
+  --library-db /path/to/library.db \
+  --database-url postgresql://localhost:5432/discogs \
+  --target-db-url postgresql://localhost:5432/discogs_cache
+```
+
+This preserves the full `discogs` database and creates a lean `discogs_cache` database with only KEEP and REVIEW releases, complete with schema, FK constraints, and trigram indexes. The target database is created automatically if it doesn't exist.
+
+You can also use `--copy-to` directly with `verify_cache.py`:
+
+```bash
+python scripts/verify_cache.py \
+  --copy-to postgresql://localhost:5432/discogs_cache \
+  /path/to/library.db \
+  postgresql://localhost:5432/discogs
+```
+
+`--copy-to` and `--prune` are mutually exclusive.
+
+### Resuming a Failed Pipeline
+
+If a pipeline run fails mid-way (e.g., disk full during index creation), you can resume from where it left off instead of restarting from scratch:
+
+```bash
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/filtered/ \
+  --library-db /path/to/library.db \
+  --database-url postgresql://localhost:5432/discogs \
+  --resume
+```
+
+The pipeline tracks step completion in a JSON state file (default: `.pipeline_state.json`). On resume, completed steps are skipped. You can specify a custom state file path with `--state-file`:
+
+```bash
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/filtered/ \
+  --resume \
+  --state-file /tmp/my_pipeline_state.json
+```
+
+If no state file exists when `--resume` is used, the pipeline infers completed steps from database state (e.g., schema exists, tables have rows, indexes present, `master_id` column dropped by dedup).
+
+`--resume` is only valid with `--csv-dir` mode, not `--xml` mode.
+
 ### Running Steps Manually
 
 Individual steps can also be run directly:
@@ -124,9 +174,11 @@ psql -d discogs -f schema/create_indexes.sql
 # 7. Deduplicate
 python scripts/dedup_releases.py [database_url]
 
-# 8. Prune (dry run first, then with --prune)
+# 8. Prune (dry run first, then with --prune or --copy-to)
 python scripts/verify_cache.py /path/to/library.db [database_url]
 python scripts/verify_cache.py --prune /path/to/library.db [database_url]
+# Or copy to a target database instead:
+python scripts/verify_cache.py --copy-to postgresql:///discogs_cache /path/to/library.db [database_url]
 
 # 9. Vacuum
 psql -d discogs -c "VACUUM FULL;"

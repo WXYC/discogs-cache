@@ -16,7 +16,8 @@ Two modes of operation:
     python scripts/run_pipeline.py \\
       --csv-dir <path/to/filtered/> \\
       [--library-db <library.db>] \\
-      [--database-url <url>]
+      [--database-url <url>] \\
+      [--resume] [--state-file <path>]
 
 Environment variables:
     DATABASE_URL  Default database URL when --database-url is not specified.
@@ -34,6 +35,9 @@ import time
 from pathlib import Path
 
 import psycopg
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from lib.pipeline_state import STEP_NAMES, PipelineState
 
 logging.basicConfig(
     level=logging.INFO,
@@ -106,6 +110,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="PostgreSQL connection URL "
         "(default: DATABASE_URL env var or postgresql://localhost:5432/discogs).",
     )
+    parser.add_argument(
+        "--target-db-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="Copy matched releases to a separate target database instead of "
+        "pruning in place. Requires --library-db.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help="Resume a previously interrupted pipeline run. "
+        "Skips steps that have already completed. Only valid with --csv-dir.",
+    )
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=Path(".pipeline_state.json"),
+        metavar="FILE",
+        help="Path to pipeline state file for tracking/resuming progress "
+        "(default: .pipeline_state.json).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -115,9 +142,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parser.error("--xml2db is required when using --xml")
         if args.library_artists is None:
             parser.error("--library-artists is required when using --xml")
+        if args.resume:
+            parser.error("--resume is only valid with --csv-dir, not --xml")
 
     if args.wxyc_db_url and not args.library_db:
         parser.error("--library-db is required when using --wxyc-db-url")
+
+    if args.target_db_url and not args.library_db:
+        parser.error("--library-db is required when using --target-db-url")
 
     return args
 
@@ -169,24 +201,28 @@ def run_sql_file(db_url: str, sql_file: Path, *, strip_concurrently: bool = Fals
 
 
 def run_step(description: str, cmd: list[str], **kwargs) -> None:
-    """Run a subprocess, logging and aborting on failure."""
+    """Run a subprocess, streaming output line-by-line.
+
+    Merges stderr into stdout to avoid threading complexity.  Each line
+    is logged at INFO level as it arrives, giving real-time visibility
+    into long-running steps like CSV import.
+    """
     logger.info("Step: %s", description)
     start = time.monotonic()
-    result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)
-
-    if result.stdout:
-        for line in result.stdout.strip().splitlines():
-            logger.info("  %s", line)
-    if result.stderr:
-        for line in result.stderr.strip().splitlines():
-            if result.returncode != 0:
-                logger.error("  %s", line)
-            else:
-                logger.info("  %s", line)
-
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        **kwargs,
+    )
+    for line in proc.stdout:
+        logger.info("  %s", line.rstrip("\n"))
+    proc.wait()
     elapsed = time.monotonic() - start
-    if result.returncode != 0:
-        logger.error("Step failed (exit %d) after %.1fs", result.returncode, elapsed)
+    if proc.returncode != 0:
+        logger.error("Step failed (exit %d) after %.1fs", proc.returncode, elapsed)
         sys.exit(1)
     logger.info("  completed in %.1fs", elapsed)
 
@@ -298,6 +334,37 @@ def filter_to_library_artists(library_artists: Path, input_dir: Path, output_dir
     )
 
 
+def _load_or_create_state(args: argparse.Namespace) -> PipelineState:
+    """Load existing state for --resume, or create fresh state.
+
+    When --resume is set and no state file exists, infers state from
+    the database structure.
+    """
+    csv_dir_str = str(args.csv_dir.resolve())
+    state_file = args.state_file
+
+    if args.resume and state_file.exists():
+        logger.info("Loading pipeline state from %s", state_file)
+        state = PipelineState.load(state_file)
+        state.validate_resume(db_url=args.database_url, csv_dir=csv_dir_str)
+        return state
+
+    if args.resume and not state_file.exists():
+        logger.info("No state file found; inferring state from database")
+        from lib.db_introspect import infer_pipeline_state
+
+        state = infer_pipeline_state(args.database_url)
+        state.csv_dir = csv_dir_str
+        completed = [s for s in STEP_NAMES if state.is_completed(s)]
+        if completed:
+            logger.info("  Inferred completed steps: %s", ", ".join(completed))
+        else:
+            logger.info("  No completed steps detected; starting from scratch")
+        return state
+
+    return PipelineState(db_url=args.database_url, csv_dir=csv_dir_str)
+
+
 def main() -> None:
     args = parse_args()
 
@@ -354,49 +421,133 @@ def main() -> None:
             _run_database_build(db_url, filtered_csv_dir, args.library_db, python)
     else:
         # Steps 4-9 only (--csv-dir mode)
-        _run_database_build(db_url, args.csv_dir, args.library_db, python)
+        state = _load_or_create_state(args)
+        _run_database_build(
+            db_url,
+            args.csv_dir,
+            args.library_db,
+            python,
+            target_db_url=args.target_db_url,
+            state=state,
+            state_file=args.state_file,
+        )
 
     total = time.monotonic() - pipeline_start
     logger.info("Pipeline complete in %.1f minutes.", total / 60)
 
 
-def _run_database_build(db_url: str, csv_dir: Path, library_db: Path | None, python: str) -> None:
-    """Steps 4-9: database schema, import, indexes, dedup, prune, vacuum."""
+def _run_database_build(
+    db_url: str,
+    csv_dir: Path,
+    library_db: Path | None,
+    python: str,
+    *,
+    target_db_url: str | None = None,
+    state: PipelineState | None = None,
+    state_file: Path | None = None,
+) -> None:
+    """Steps 4-9: database schema, import, indexes, dedup, prune/copy-to, vacuum.
+
+    When *state* is provided, completed steps are skipped and progress
+    is saved to *state_file* after each step.
+
+    When *target_db_url* is provided, matched releases are copied to the
+    target database instead of pruning the source in place.
+    """
+
+    def _save_state() -> None:
+        if state is not None and state_file is not None:
+            state.save(state_file)
+
     # Step 4: Wait for Postgres
     wait_for_postgres(db_url)
 
     # Step 5: Create schema
-    run_sql_file(db_url, SCHEMA_DIR / "create_database.sql")
+    if state and state.is_completed("create_schema"):
+        logger.info("Skipping create_schema (already completed)")
+    else:
+        run_sql_file(db_url, SCHEMA_DIR / "create_database.sql")
+        if state:
+            state.mark_completed("create_schema")
+            _save_state()
 
     # Step 6: Import CSVs
-    run_step(
-        "Import CSVs",
-        [python, str(SCRIPT_DIR / "import_csv.py"), str(csv_dir), db_url],
-    )
+    if state and state.is_completed("import_csv"):
+        logger.info("Skipping import_csv (already completed)")
+    else:
+        run_step(
+            "Import CSVs",
+            [python, str(SCRIPT_DIR / "import_csv.py"), str(csv_dir), db_url],
+        )
+        if state:
+            state.mark_completed("import_csv")
+            _save_state()
 
     # Step 7: Create trigram indexes (strip CONCURRENTLY for fresh DB)
-    run_sql_file(db_url, SCHEMA_DIR / "create_indexes.sql", strip_concurrently=True)
+    if state and state.is_completed("create_indexes"):
+        logger.info("Skipping create_indexes (already completed)")
+    else:
+        run_sql_file(db_url, SCHEMA_DIR / "create_indexes.sql", strip_concurrently=True)
+        if state:
+            state.mark_completed("create_indexes")
+            _save_state()
 
     # Step 8: Deduplicate by master_id
-    run_step(
-        "Deduplicate releases",
-        [python, str(SCRIPT_DIR / "dedup_releases.py"), db_url],
-    )
+    if state and state.is_completed("dedup"):
+        logger.info("Skipping dedup (already completed)")
+    else:
+        run_step(
+            "Deduplicate releases",
+            [python, str(SCRIPT_DIR / "dedup_releases.py"), db_url],
+        )
+        if state:
+            state.mark_completed("dedup")
+            _save_state()
 
-    # Step 9: Prune to library matches (optional)
-    if library_db:
+    # Step 9: Prune or copy-to (optional)
+    if state and state.is_completed("prune"):
+        logger.info("Skipping prune/copy-to (already completed)")
+    elif library_db and target_db_url:
+        run_step(
+            "Copy matched releases to target database",
+            [
+                python,
+                str(SCRIPT_DIR / "verify_cache.py"),
+                "--copy-to",
+                target_db_url,
+                str(library_db),
+                db_url,
+            ],
+        )
+        if state:
+            state.mark_completed("prune")
+            _save_state()
+    elif library_db:
         run_step(
             "Prune to library matches",
             [python, str(SCRIPT_DIR / "verify_cache.py"), "--prune", str(library_db), db_url],
         )
+        if state:
+            state.mark_completed("prune")
+            _save_state()
     else:
         logger.info("Skipping prune step (no library.db provided)")
+        if state:
+            state.mark_completed("prune")
+            _save_state()
 
-    # Step 10: Vacuum
-    run_vacuum(db_url)
+    # Step 10: Vacuum (on target DB if using copy-to, otherwise source)
+    vacuum_db = target_db_url if target_db_url else db_url
+    if state and state.is_completed("vacuum"):
+        logger.info("Skipping vacuum (already completed)")
+    else:
+        run_vacuum(vacuum_db)
+        if state:
+            state.mark_completed("vacuum")
+            _save_state()
 
     # Step 11: Report
-    report_sizes(db_url)
+    report_sizes(vacuum_db)
 
 
 if __name__ == "__main__":

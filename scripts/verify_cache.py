@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import asyncpg
+import psycopg
 from rapidfuzz import fuzz, process
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -649,6 +650,177 @@ async def prune_releases(conn: asyncpg.Connection, release_ids: set[int]) -> dic
 
 
 # ---------------------------------------------------------------------------
+# Copy to target database
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR = Path(__file__).parent
+SCHEMA_DIR = SCRIPT_DIR.parent / "schema"
+
+# Tables and their columns to copy (post-dedup: no master_id).
+# Each entry: (table_name, filter_column, columns_list)
+COPY_TABLE_SPEC = [
+    ("release", "id", ["id", "title", "release_year", "artwork_url"]),
+    ("release_artist", "release_id", ["release_id", "artist_name", "extra"]),
+    ("release_track", "release_id", ["release_id", "sequence", "position", "title", "duration"]),
+    (
+        "release_track_artist",
+        "release_id",
+        ["release_id", "track_sequence", "artist_name"],
+    ),
+    (
+        "cache_metadata",
+        "release_id",
+        ["release_id", "cached_at", "source", "last_validated"],
+    ),
+]
+
+
+def _parse_db_name(db_url: str) -> str:
+    """Extract the database name from a PostgreSQL connection URL."""
+    # postgresql://user:pass@host:port/dbname -> dbname
+    # postgresql:///dbname -> dbname
+    return db_url.rsplit("/", 1)[-1]
+
+
+def _admin_url(db_url: str) -> str:
+    """Build a URL to the 'postgres' admin database on the same server."""
+    return db_url.rsplit("/", 1)[0] + "/postgres"
+
+
+def _ensure_target_database(target_url: str) -> None:
+    """Create the target database if it does not already exist."""
+    db_name = _parse_db_name(target_url)
+    admin = _admin_url(target_url)
+
+    conn = psycopg.connect(admin, autocommit=True)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s",
+            (db_name,),
+        )
+        if cur.fetchone() is None:
+            # Use SQL composition to safely quote the identifier
+            from psycopg import sql as psql
+
+            cur.execute(psql.SQL("CREATE DATABASE {}").format(psql.Identifier(db_name)))
+            logger.info("Created target database: %s", db_name)
+        else:
+            logger.info("Target database already exists: %s", db_name)
+    conn.close()
+
+
+def _create_target_schema(target_url: str) -> None:
+    """Drop existing tables and apply the schema to the target database."""
+    conn = psycopg.connect(target_url, autocommit=True)
+    with conn.cursor() as cur:
+        for table in (
+            "cache_metadata",
+            "release_track_artist",
+            "release_track",
+            "release_artist",
+            "release",
+        ):
+            cur.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+        schema_sql = SCHEMA_DIR.joinpath("create_database.sql").read_text()
+        cur.execute(schema_sql)
+    conn.close()
+    logger.info("Applied schema to target database")
+
+
+def _create_target_indexes(target_url: str) -> None:
+    """Create indexes on the target database (without CONCURRENTLY)."""
+    sql_text = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
+    sql_text = sql_text.replace(" CONCURRENTLY", "")
+
+    conn = psycopg.connect(target_url, autocommit=True)
+    with conn.cursor() as cur:
+        cur.execute(sql_text)
+    conn.close()
+    logger.info("Created indexes on target database")
+
+
+def copy_releases_to_target(
+    source_url: str,
+    target_url: str,
+    keep_ids: set[int],
+    review_ids: set[int],
+) -> None:
+    """Copy KEEP and REVIEW releases from source to target database.
+
+    1. Creates the target database if it doesn't exist.
+    2. Applies the schema (drops existing tables first).
+    3. Loads KEEP+REVIEW IDs into a temp table on the source.
+    4. Streams each table from source to target via psycopg COPY.
+    5. Creates trigram indexes on the target.
+
+    Args:
+        source_url: PostgreSQL connection URL for the source (imported) database.
+        target_url: PostgreSQL connection URL for the target database.
+        keep_ids: Set of release IDs classified as KEEP.
+        review_ids: Set of release IDs classified as REVIEW.
+    """
+    all_ids = keep_ids | review_ids
+    if not all_ids:
+        logger.warning("No releases to copy (keep=%d, review=%d)", len(keep_ids), len(review_ids))
+        return
+
+    logger.info(
+        "Copying %s releases to target (%s KEEP + %s REVIEW)",
+        f"{len(all_ids):,}",
+        f"{len(keep_ids):,}",
+        f"{len(review_ids):,}",
+    )
+
+    # Step 1: Create target database
+    _ensure_target_database(target_url)
+
+    # Step 2: Apply schema
+    _create_target_schema(target_url)
+
+    # Step 3-4: Stream data from source to target
+    source_conn = psycopg.connect(source_url)
+    target_conn = psycopg.connect(target_url)
+
+    try:
+        # Create temp table with IDs to copy on the source
+        with source_conn.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE _copy_ids (release_id integer PRIMARY KEY)")
+            with cur.copy("COPY _copy_ids (release_id) FROM STDIN") as copy:
+                for rid in all_ids:
+                    copy.write_row((rid,))
+        source_conn.commit()
+
+        total_rows = 0
+        for table_name, filter_col, columns in COPY_TABLE_SPEC:
+            col_list = ", ".join(columns)
+            select_query = (
+                f"COPY (SELECT {col_list} FROM {table_name} "
+                f"WHERE {filter_col} IN (SELECT release_id FROM _copy_ids)) TO STDOUT"
+            )
+
+            row_count = 0
+            with source_conn.cursor() as src_cur:
+                with src_cur.copy(select_query) as src_copy:
+                    with target_conn.cursor() as tgt_cur:
+                        with tgt_cur.copy(f"COPY {table_name} ({col_list}) FROM STDIN") as tgt_copy:
+                            for data in src_copy:
+                                tgt_copy.write(data)
+                                row_count += 1
+
+            total_rows += row_count
+            logger.info("  Copied %s: %s rows", table_name, f"{row_count:,}")
+
+        target_conn.commit()
+        logger.info("Copied %s total rows to target", f"{total_rows:,}")
+    finally:
+        source_conn.close()
+        target_conn.close()
+
+    # Step 5: Create indexes
+    _create_target_indexes(target_url)
+
+
+# ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
 
@@ -782,7 +954,7 @@ def print_report(
     print(f"Review artists:    {len(report.review_by_artist):>8,}")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Verify and optionally prune the Discogs cache against the WXYC library.",
     )
@@ -797,12 +969,23 @@ def parse_args() -> argparse.Namespace:
         default="postgresql:///discogs",
         help="PostgreSQL connection URL for the Discogs cache (default: postgresql:///discogs)",
     )
-    parser.add_argument(
+
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument(
         "--prune",
         action="store_true",
         help="Actually delete PRUNE releases (default is dry run). "
         "REVIEW releases are never deleted.",
     )
+    action.add_argument(
+        "--copy-to",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="Copy KEEP and REVIEW releases to a target PostgreSQL database "
+        "(creates the database if it doesn't exist).",
+    )
+
     parser.add_argument(
         "--mappings-file",
         type=Path,
@@ -815,7 +998,7 @@ def parse_args() -> argparse.Namespace:
         default=0.75,
         help="Keep threshold for 2-of-3 agreement (0.0-1.0, default: 0.75)",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def classify_all_releases(
@@ -1107,7 +1290,19 @@ async def async_main():
         logger.info("Measuring table sizes...")
         table_sizes = await get_table_sizes(conn)
 
-        if args.prune:
+        if args.copy_to:
+            # Copy KEEP + REVIEW releases to a separate target database
+            logger.info("Copying matched releases to target database...")
+            copy_releases_to_target(
+                args.database_url,
+                args.copy_to,
+                report.keep_ids,
+                report.review_ids,
+            )
+            # Dry-run report (source is unchanged)
+            rows_to_delete = await count_rows_to_delete(conn, report.prune_ids)
+            print_report(report, index, table_sizes, rows_to_delete, pruned=False)
+        elif args.prune:
             # Actually delete PRUNE releases (never REVIEW)
             logger.info(f"Pruning {len(report.prune_ids):,} releases...")
             rows_deleted = await prune_releases(conn, report.prune_ids)

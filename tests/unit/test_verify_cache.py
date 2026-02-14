@@ -561,3 +561,46 @@ class TestLoadDiscogsReleases:
         mock_conn.fetch = AsyncMock(return_value=[])
         releases = await load_discogs_releases(mock_conn)
         assert releases == []
+
+
+# ---------------------------------------------------------------------------
+# Step 8: Argument Parsing
+# ---------------------------------------------------------------------------
+
+parse_args = _vc.parse_args
+
+
+class TestParseArgsCopyTo:
+    """Test --copy-to argument parsing and mutual exclusivity with --prune."""
+
+    def test_copy_to_parsed(self, tmp_path):
+        """--copy-to is parsed as a string."""
+        lib_db = tmp_path / "library.db"
+        lib_db.touch()
+        args = parse_args(
+            [str(lib_db), "postgresql:///discogs", "--copy-to", "postgresql:///target"]
+        )
+        assert args.copy_to == "postgresql:///target"
+        assert not args.prune
+
+    def test_prune_without_copy_to(self, tmp_path):
+        """--prune works without --copy-to."""
+        lib_db = tmp_path / "library.db"
+        lib_db.touch()
+        args = parse_args([str(lib_db), "--prune"])
+        assert args.prune
+        assert args.copy_to is None
+
+    def test_copy_to_and_prune_mutually_exclusive(self, tmp_path):
+        """--copy-to and --prune cannot be used together."""
+        lib_db = tmp_path / "library.db"
+        lib_db.touch()
+        with pytest.raises(SystemExit):
+            parse_args([str(lib_db), "--prune", "--copy-to", "postgresql:///target"])
+
+    def test_default_no_copy_to(self, tmp_path):
+        """copy_to defaults to None when not specified."""
+        lib_db = tmp_path / "library.db"
+        lib_db.touch()
+        args = parse_args([str(lib_db)])
+        assert args.copy_to is None
