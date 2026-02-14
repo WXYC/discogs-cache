@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 #
 # When csv_columns != db_columns, values are mapped positionally.
 
-YEAR_RE = re.compile(r"^\d{4}")
+YEAR_RE = re.compile(r"^[0-9]{4}")
 
 
 def extract_year(released: str | None) -> str | None:

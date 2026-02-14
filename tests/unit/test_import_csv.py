@@ -41,6 +41,8 @@ class TestExtractYear:
             ("TBD", None),
             ("0000", "0000"),
             ("2023-00-00", "2023"),
+            ("202１", None),  # fullwidth digit U+FF11
+            ("２０２３", None),  # all fullwidth digits
         ],
         ids=[
             "full-date",
@@ -54,6 +56,8 @@ class TestExtractYear:
             "tbd-text",
             "zeros",
             "partial-date",
+            "fullwidth-digit",
+            "all-fullwidth-digits",
         ],
     )
     def test_extract_year(self, input_val: str | None, expected: str | None) -> None:
