@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from lib.pipeline_state import PipelineState
+from lib.pipeline_state import STEP_NAMES, PipelineState
 
-STEPS = ["create_schema", "import_csv", "create_indexes", "dedup", "prune", "vacuum"]
+STEPS = STEP_NAMES
 
 
 class TestFreshState:
@@ -21,6 +21,23 @@ class TestFreshState:
         )
         for step in STEPS:
             assert not state.is_completed(step)
+
+    def test_step_count(self) -> None:
+        """V2 pipeline has 8 steps."""
+        assert len(STEPS) == 8
+
+    def test_step_order(self) -> None:
+        """Steps are in correct execution order."""
+        assert STEPS == [
+            "create_schema",
+            "import_csv",
+            "create_indexes",
+            "dedup",
+            "import_tracks",
+            "create_track_indexes",
+            "prune",
+            "vacuum",
+        ]
 
 
 class TestMarkCompleted:
@@ -36,6 +53,13 @@ class TestMarkCompleted:
         state.mark_completed("import_csv")
         assert not state.is_completed("create_schema")
         assert not state.is_completed("dedup")
+
+    def test_new_steps_can_be_marked(self) -> None:
+        state = PipelineState(db_url="postgresql://localhost/test", csv_dir="/tmp/csv")
+        state.mark_completed("import_tracks")
+        assert state.is_completed("import_tracks")
+        state.mark_completed("create_track_indexes")
+        assert state.is_completed("create_track_indexes")
 
 
 class TestMarkFailed:
@@ -59,7 +83,7 @@ class TestSaveLoad:
         state.save(state_file)
 
         data = json.loads(state_file.read_text())
-        assert data["version"] == 1
+        assert data["version"] == 2
         assert data["database_url"] == "postgresql://localhost/test"
         assert data["csv_dir"] == "/tmp/csv"
         assert data["steps"]["create_schema"]["status"] == "completed"
@@ -91,6 +115,112 @@ class TestSaveLoad:
         # The temp file should not linger
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert tmp_files == []
+
+    def test_v2_round_trip(self, tmp_path) -> None:
+        """Save and load a v2 state with all steps."""
+        state_file = tmp_path / "state.json"
+        state = PipelineState(db_url="postgresql://localhost/test", csv_dir="/tmp/csv")
+        for step in STEPS:
+            state.mark_completed(step)
+        state.save(state_file)
+
+        loaded = PipelineState.load(state_file)
+        for step in STEPS:
+            assert loaded.is_completed(step), f"Step {step} should be completed"
+
+    def test_v2_has_all_steps_in_file(self, tmp_path) -> None:
+        """State file contains all 8 v2 steps."""
+        state_file = tmp_path / "state.json"
+        state = PipelineState(db_url="postgresql://localhost/test", csv_dir="/tmp/csv")
+        state.save(state_file)
+
+        data = json.loads(state_file.read_text())
+        assert set(data["steps"].keys()) == set(STEPS)
+
+
+class TestV1Migration:
+    """load() migrates v1 state files to v2."""
+
+    def _make_v1_state(self, tmp_path, completed_steps: list[str]) -> dict:
+        """Create a v1 state file and return its data."""
+        v1_steps = {
+            name: {"status": "pending"}
+            for name in [
+                "create_schema",
+                "import_csv",
+                "create_indexes",
+                "dedup",
+                "prune",
+                "vacuum",
+            ]
+        }
+        for step in completed_steps:
+            v1_steps[step] = {"status": "completed"}
+
+        data = {
+            "version": 1,
+            "database_url": "postgresql://localhost/test",
+            "csv_dir": "/tmp/csv",
+            "steps": v1_steps,
+        }
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps(data))
+        return data
+
+    def test_all_completed_v1(self, tmp_path) -> None:
+        """All v1 steps completed -> all v2 steps completed."""
+        self._make_v1_state(
+            tmp_path,
+            ["create_schema", "import_csv", "create_indexes", "dedup", "prune", "vacuum"],
+        )
+        state = PipelineState.load(tmp_path / "state.json")
+
+        for step in STEPS:
+            assert state.is_completed(step), f"Step {step} should be completed after v1 migration"
+
+    def test_import_csv_completed_implies_import_tracks(self, tmp_path) -> None:
+        """V1 import_csv completed -> import_tracks also completed."""
+        self._make_v1_state(tmp_path, ["create_schema", "import_csv"])
+        state = PipelineState.load(tmp_path / "state.json")
+
+        assert state.is_completed("import_csv")
+        assert state.is_completed("import_tracks")
+        assert not state.is_completed("create_track_indexes")
+
+    def test_create_indexes_completed_implies_create_track_indexes(self, tmp_path) -> None:
+        """V1 create_indexes completed -> create_track_indexes also completed."""
+        self._make_v1_state(tmp_path, ["create_schema", "import_csv", "create_indexes"])
+        state = PipelineState.load(tmp_path / "state.json")
+
+        assert state.is_completed("create_indexes")
+        assert state.is_completed("create_track_indexes")
+
+    def test_dedup_completed_implies_create_track_indexes(self, tmp_path) -> None:
+        """V1 dedup completed -> create_track_indexes also completed."""
+        self._make_v1_state(tmp_path, ["create_schema", "import_csv", "create_indexes", "dedup"])
+        state = PipelineState.load(tmp_path / "state.json")
+
+        assert state.is_completed("dedup")
+        assert state.is_completed("import_tracks")
+        assert state.is_completed("create_track_indexes")
+
+    def test_partial_v1_only_schema(self, tmp_path) -> None:
+        """V1 with only schema completed."""
+        self._make_v1_state(tmp_path, ["create_schema"])
+        state = PipelineState.load(tmp_path / "state.json")
+
+        assert state.is_completed("create_schema")
+        assert not state.is_completed("import_csv")
+        assert not state.is_completed("import_tracks")
+        assert not state.is_completed("create_track_indexes")
+
+    def test_v1_preserves_metadata(self, tmp_path) -> None:
+        """V1 migration preserves db_url and csv_dir."""
+        self._make_v1_state(tmp_path, [])
+        state = PipelineState.load(tmp_path / "state.json")
+
+        assert state.db_url == "postgresql://localhost/test"
+        assert state.csv_dir == "/tmp/csv"
 
 
 class TestValidateResume:

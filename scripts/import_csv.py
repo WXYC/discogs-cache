@@ -43,6 +43,23 @@ def extract_year(released: str | None) -> str | None:
     return None
 
 
+def count_tracks_from_csv(csv_path: Path) -> dict[int, int]:
+    """Count tracks per release_id from a release_track CSV file.
+
+    Returns a dict mapping release_id -> track count.
+    """
+    counts: dict[int, int] = {}
+    with open(csv_path, encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                release_id = int(row["release_id"])
+            except (ValueError, KeyError):
+                continue
+            counts[release_id] = counts.get(release_id, 0) + 1
+    return counts
+
+
 class TableConfig(TypedDict):
     csv_file: str
     table: str
@@ -52,7 +69,7 @@ class TableConfig(TypedDict):
     transforms: dict[str, Callable[[str | None], str | None]]
 
 
-TABLES: list[TableConfig] = [
+BASE_TABLES: list[TableConfig] = [
     {
         "csv_file": "release.csv",
         "table": "release",
@@ -70,6 +87,9 @@ TABLES: list[TableConfig] = [
         "transforms": {},
         "unique_key": ["release_id", "artist_name"],
     },
+]
+
+TRACK_TABLES: list[TableConfig] = [
     {
         "csv_file": "release_track.csv",
         "table": "release_track",
@@ -89,6 +109,8 @@ TABLES: list[TableConfig] = [
     },
 ]
 
+TABLES: list[TableConfig] = BASE_TABLES + TRACK_TABLES
+
 
 def import_csv(
     conn,
@@ -99,6 +121,7 @@ def import_csv(
     required_columns: list[str],
     transforms: dict,
     unique_key: list[str] | None = None,
+    release_id_filter: set[int] | None = None,
 ) -> int:
     """Import a CSV file into a table, selecting only needed columns.
 
@@ -108,6 +131,9 @@ def import_csv(
 
     If unique_key is provided, duplicate rows (by those CSV columns) are
     skipped, keeping the first occurrence.
+
+    If release_id_filter is provided, only rows whose release_id is in the
+    set are imported. The CSV must have a 'release_id' or 'id' column.
     """
     logger.info(f"Importing {csv_path.name} into {table}...")
 
@@ -135,12 +161,32 @@ def import_csv(
         required_set = set(required_columns)
         seen: set[tuple[str | None, ...]] = set()
 
+        # Determine release_id column name for filtering
+        release_id_col: str | None = None
+        if release_id_filter is not None:
+            for col_name in ("release_id", "id"):
+                if col_name in csv_columns:
+                    release_id_col = col_name
+                    break
+
         with conn.cursor() as cur:
             with cur.copy(f"COPY {table} ({db_col_list}) FROM STDIN") as copy:
                 count = 0
                 skipped = 0
+                filtered = 0
                 dupes = 0
                 for row in reader:
+                    # Filter by release_id if specified
+                    if release_id_filter is not None and release_id_col is not None:
+                        try:
+                            rid = int(row.get(release_id_col, ""))
+                        except (ValueError, TypeError):
+                            filtered += 1
+                            continue
+                        if rid not in release_id_filter:
+                            filtered += 1
+                            continue
+
                     # Extract only the columns we need
                     values: list[str | None] = []
                     skip = False
@@ -182,10 +228,44 @@ def import_csv(
     parts = [f"Imported {count:,} rows"]
     if skipped > 0:
         parts.append(f"skipped {skipped:,} with null required fields")
+    if filtered > 0:
+        parts.append(f"filtered {filtered:,} by release_id")
     if dupes > 0:
         parts.append(f"skipped {dupes:,} duplicates")
     logger.info(f"  {', '.join(parts)}")
     return count
+
+
+def create_track_count_table(conn, csv_dir: Path) -> int:
+    """Pre-compute track counts from CSV and store in release_track_count table.
+
+    Creates an unlogged table with (release_id, track_count) that dedup uses
+    to rank releases by track count before tracks are imported.
+
+    Returns the number of releases with track counts.
+    """
+    csv_path = csv_dir / "release_track.csv"
+    if not csv_path.exists():
+        logger.warning("release_track.csv not found, skipping track count table")
+        return 0
+
+    logger.info("Computing track counts from release_track.csv...")
+    counts = count_tracks_from_csv(csv_path)
+
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS release_track_count")
+        cur.execute("""
+            CREATE UNLOGGED TABLE release_track_count (
+                release_id integer PRIMARY KEY,
+                track_count integer NOT NULL
+            )
+        """)
+        with cur.copy("COPY release_track_count (release_id, track_count) FROM STDIN") as copy:
+            for release_id, track_count in counts.items():
+                copy.write_row((release_id, track_count))
+    conn.commit()
+    logger.info(f"  Created release_track_count with {len(counts):,} rows")
+    return len(counts)
 
 
 def import_artwork(conn, csv_dir: Path) -> int:
@@ -261,23 +341,15 @@ def import_artwork(conn, csv_dir: Path) -> int:
     return len(artwork)
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: import_csv.py <csv_directory> [database_url]")
-        sys.exit(1)
-
-    csv_dir = Path(sys.argv[1])
-    db_url = sys.argv[2] if len(sys.argv) > 2 else "postgresql:///discogs"
-
-    if not csv_dir.exists():
-        logger.error(f"CSV directory not found: {csv_dir}")
-        sys.exit(1)
-
-    logger.info(f"Connecting to {db_url}")
-    conn = psycopg.connect(db_url)
-
+def _import_tables(
+    conn,
+    csv_dir: Path,
+    table_list: list[TableConfig],
+    release_id_filter: set[int] | None = None,
+) -> int:
+    """Import a list of table configs, returning total row count."""
     total = 0
-    for table_config in TABLES:
+    for table_config in table_list:
         csv_path = csv_dir / table_config["csv_file"]
         if not csv_path.exists():
             logger.warning(f"Skipping {table_config['csv_file']} (not found)")
@@ -292,22 +364,80 @@ def main():
             table_config["required"],
             table_config["transforms"],
             unique_key=table_config.get("unique_key"),
+            release_id_filter=release_id_filter,
         )
         total += count
+    return total
 
-    # Import artwork from release_image.csv
-    import_artwork(conn, csv_dir)
 
-    # Populate cache_metadata
-    logger.info("Populating cache_metadata...")
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO cache_metadata (release_id, source)
-            SELECT id, 'bulk_import'
-            FROM release
-            ON CONFLICT (release_id) DO NOTHING
-        """)
-    conn.commit()
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Import Discogs CSV files into PostgreSQL")
+    parser.add_argument("csv_dir", type=Path, help="Directory containing CSV files")
+    parser.add_argument(
+        "db_url",
+        nargs="?",
+        default="postgresql:///discogs",
+        help="PostgreSQL connection URL",
+    )
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--base-only",
+        action="store_true",
+        help="Import only base tables (release, release_artist) "
+        "plus artwork, cache_metadata, and track counts",
+    )
+    mode.add_argument(
+        "--tracks-only",
+        action="store_true",
+        help="Import only track tables, filtered to surviving release IDs",
+    )
+
+    args = parser.parse_args()
+    csv_dir = args.csv_dir
+    db_url = args.db_url
+
+    if not csv_dir.exists():
+        logger.error(f"CSV directory not found: {csv_dir}")
+        sys.exit(1)
+
+    logger.info(f"Connecting to {db_url}")
+    conn = psycopg.connect(db_url)
+
+    if args.tracks_only:
+        # Query surviving release IDs from the database
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM release")
+            release_ids = {row[0] for row in cur.fetchall()}
+        logger.info(f"Filtering tracks to {len(release_ids):,} surviving releases")
+        total = _import_tables(conn, csv_dir, TRACK_TABLES, release_id_filter=release_ids)
+    elif args.base_only:
+        total = _import_tables(conn, csv_dir, BASE_TABLES)
+        import_artwork(conn, csv_dir)
+        logger.info("Populating cache_metadata...")
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO cache_metadata (release_id, source)
+                SELECT id, 'bulk_import'
+                FROM release
+                ON CONFLICT (release_id) DO NOTHING
+            """)
+        conn.commit()
+        create_track_count_table(conn, csv_dir)
+    else:
+        total = _import_tables(conn, csv_dir, TABLES)
+        import_artwork(conn, csv_dir)
+        logger.info("Populating cache_metadata...")
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO cache_metadata (release_id, source)
+                SELECT id, 'bulk_import'
+                FROM release
+                ON CONFLICT (release_id) DO NOTHING
+            """)
+        conn.commit()
 
     logger.info(f"Total: {total:,} rows imported")
     conn.close()

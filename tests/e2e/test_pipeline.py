@@ -450,7 +450,7 @@ class TestPipelineStateFile:
     def test_state_file_has_correct_metadata(self) -> None:
         """State file contains correct database URL and version."""
         data = json.loads(self.__class__._state_file.read_text())
-        assert data["version"] == 1
+        assert data["version"] == 2
         assert data["database_url"] == self.__class__._db_url
 
 
@@ -521,6 +521,8 @@ class TestPipelineResume:
         assert "Skipping import_csv" in stderr
         assert "Skipping create_indexes" in stderr
         assert "Skipping dedup" in stderr
+        assert "Skipping import_tracks" in stderr
+        assert "Skipping create_track_indexes" in stderr
         assert "Skipping prune" in stderr
         assert "Skipping vacuum" in stderr
 

@@ -53,8 +53,8 @@ def column_exists(db_url: str, table_name: str, column_name: str) -> bool:
     return result
 
 
-def trigram_indexes_exist(db_url: str) -> bool:
-    """Return True if trigram GIN indexes exist on the expected tables."""
+def _get_trigram_indexes(db_url: str) -> set[str]:
+    """Return the set of trigram index names in the public schema."""
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
         cur.execute(
@@ -63,13 +63,35 @@ def trigram_indexes_exist(db_url: str) -> bool:
         )
         indexes = {row[0] for row in cur.fetchall()}
     conn.close()
+    return indexes
+
+
+def base_trigram_indexes_exist(db_url: str) -> bool:
+    """Return True if base trigram GIN indexes exist (release, release_artist)."""
+    indexes = _get_trigram_indexes(db_url)
     expected = {
-        "idx_release_track_title_trgm",
         "idx_release_artist_name_trgm",
-        "idx_release_track_artist_name_trgm",
         "idx_release_title_trgm",
     }
     return expected.issubset(indexes)
+
+
+def track_trigram_indexes_exist(db_url: str) -> bool:
+    """Return True if track trigram GIN indexes exist (release_track, release_track_artist)."""
+    indexes = _get_trigram_indexes(db_url)
+    expected = {
+        "idx_release_track_title_trgm",
+        "idx_release_track_artist_name_trgm",
+    }
+    return expected.issubset(indexes)
+
+
+def trigram_indexes_exist(db_url: str) -> bool:
+    """Return True if all trigram GIN indexes exist (base + track).
+
+    Backward-compatible convenience function.
+    """
+    return base_trigram_indexes_exist(db_url) and track_trigram_indexes_exist(db_url)
 
 
 def infer_pipeline_state(db_url: str) -> PipelineState:
@@ -91,13 +113,21 @@ def infer_pipeline_state(db_url: str) -> PipelineState:
         return state
     state.mark_completed("import_csv")
 
-    if not trigram_indexes_exist(db_url):
+    if not base_trigram_indexes_exist(db_url):
         return state
     state.mark_completed("create_indexes")
 
     if column_exists(db_url, "release", "master_id"):
         return state
     state.mark_completed("dedup")
+
+    if not table_has_rows(db_url, "release_track"):
+        return state
+    state.mark_completed("import_tracks")
+
+    if not track_trigram_indexes_exist(db_url):
+        return state
+    state.mark_completed("create_track_indexes")
 
     # prune and vacuum cannot be inferred from database state
     return state

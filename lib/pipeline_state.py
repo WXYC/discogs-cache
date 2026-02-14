@@ -9,9 +9,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-VERSION = 1
+VERSION = 2
 
-STEP_NAMES = ["create_schema", "import_csv", "create_indexes", "dedup", "prune", "vacuum"]
+STEP_NAMES = [
+    "create_schema",
+    "import_csv",
+    "create_indexes",
+    "dedup",
+    "import_tracks",
+    "create_track_indexes",
+    "prune",
+    "vacuum",
+]
+
+# Mapping from v1 step names to v2 equivalents for migration
+_V1_STEP_NAMES = ["create_schema", "import_csv", "create_indexes", "dedup", "prune", "vacuum"]
 
 
 class PipelineState:
@@ -64,11 +76,51 @@ class PipelineState:
 
     @classmethod
     def load(cls, path: Path) -> PipelineState:
-        """Load state from a JSON file."""
+        """Load state from a JSON file.
+
+        Supports v1 state files by migrating them to v2 format.
+        """
         data = json.loads(path.read_text())
         version = data.get("version")
+
+        if version == 1:
+            return cls._migrate_v1(data)
         if version != VERSION:
             raise ValueError(f"Unsupported state file version {version} (expected {VERSION})")
+
         state = cls(db_url=data["database_url"], csv_dir=data["csv_dir"])
         state._steps = data["steps"]
+        return state
+
+    @classmethod
+    def _migrate_v1(cls, data: dict) -> PipelineState:
+        """Migrate a v1 state file to v2 format.
+
+        V2 adds import_tracks and create_track_indexes between dedup and prune.
+
+        Migration rules:
+        - All v1 steps map directly to their v2 equivalents
+        - If import_csv was completed in v1, import_tracks is also completed
+          (v1 imported tracks as part of import_csv)
+        - If create_indexes or dedup was completed in v1, create_track_indexes
+          is also completed (v1 created track indexes during those steps)
+        """
+        state = cls(db_url=data["database_url"], csv_dir=data["csv_dir"])
+        v1_steps = data.get("steps", {})
+
+        # Copy v1 steps that exist in v2
+        for step_name in _V1_STEP_NAMES:
+            if step_name in v1_steps:
+                state._steps[step_name] = v1_steps[step_name]
+
+        # Infer import_tracks from import_csv
+        if v1_steps.get("import_csv", {}).get("status") == "completed":
+            state._steps["import_tracks"] = {"status": "completed"}
+
+        # Infer create_track_indexes from dedup (v1 created all indexes in dedup)
+        if v1_steps.get("dedup", {}).get("status") == "completed":
+            state._steps["create_track_indexes"] = {"status": "completed"}
+        elif v1_steps.get("create_indexes", {}).get("status") == "completed":
+            state._steps["create_track_indexes"] = {"status": "completed"}
+
         return state

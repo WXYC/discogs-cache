@@ -159,8 +159,8 @@ class TestCreateDatabase:
         conn.close()
 
 
-class TestCreateIndexes:
-    """Verify create_indexes.sql can be applied after data import."""
+class TestCreateBaseIndexes:
+    """Verify create_indexes.sql creates base trigram indexes."""
 
     @pytest.fixture(autouse=True)
     def _apply_schema_and_data(self, db_url):
@@ -170,7 +170,6 @@ class TestCreateIndexes:
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
             cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
-            # Insert minimal data so indexes have something to work with
             cur.execute(
                 "INSERT INTO release (id, title) VALUES (1, 'Test Album') ON CONFLICT DO NOTHING"
             )
@@ -179,30 +178,19 @@ class TestCreateIndexes:
                 "SELECT 1, 'Test Artist', 0 WHERE NOT EXISTS "
                 "(SELECT 1 FROM release_artist WHERE release_id = 1)"
             )
-            cur.execute(
-                "INSERT INTO release_track (release_id, sequence, position, title) "
-                "SELECT 1, 1, 'A1', 'Test Track' WHERE NOT EXISTS "
-                "(SELECT 1 FROM release_track WHERE release_id = 1 AND sequence = 1)"
-            )
-            cur.execute(
-                "INSERT INTO release_track_artist (release_id, track_sequence, artist_name) "
-                "SELECT 1, 1, 'Track Artist' WHERE NOT EXISTS "
-                "(SELECT 1 FROM release_track_artist WHERE release_id = 1 AND track_sequence = 1)"
-            )
         conn.close()
 
-    def test_indexes_execute_without_error(self) -> None:
-        """Trigram indexes can be created after data is loaded."""
+    def test_base_indexes_execute_without_error(self) -> None:
+        """Base trigram indexes can be created after data is loaded."""
         conn = psycopg.connect(self.db_url, autocommit=True)
         with conn.cursor() as cur:
-            # Strip CONCURRENTLY since we're in a test with autocommit
             sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
             sql = sql.replace(" CONCURRENTLY", "")
             cur.execute(sql)
         conn.close()
 
-    def test_trigram_indexes_exist(self) -> None:
-        """All four trigram indexes are created."""
+    def test_base_trigram_indexes_exist(self) -> None:
+        """Base trigram indexes (release, release_artist) are created."""
         conn = psycopg.connect(self.db_url, autocommit=True)
         with conn.cursor() as cur:
             sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
@@ -217,15 +205,13 @@ class TestCreateIndexes:
             indexes = {row[0] for row in cur.fetchall()}
         conn.close()
         expected = {
-            "idx_release_track_title_trgm",
             "idx_release_artist_name_trgm",
-            "idx_release_track_artist_name_trgm",
             "idx_release_title_trgm",
         }
         assert expected.issubset(indexes)
 
-    def test_trigram_indexes_use_unaccent(self) -> None:
-        """All four trigram indexes use f_unaccent() for accent-insensitive matching."""
+    def test_base_trigram_indexes_use_unaccent(self) -> None:
+        """Base trigram indexes use f_unaccent() for accent-insensitive matching."""
         conn = psycopg.connect(self.db_url, autocommit=True)
         with conn.cursor() as cur:
             sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
@@ -243,3 +229,140 @@ class TestCreateIndexes:
             assert "f_unaccent" in indexdef, (
                 f"Index {indexname} should use f_unaccent(): {indexdef}"
             )
+
+
+class TestCreateTrackIndexes:
+    """Verify create_track_indexes.sql creates track-related indexes and constraints."""
+
+    @pytest.fixture(autouse=True)
+    def _apply_schema_and_data(self, db_url):
+        """Set up schema, functions, and insert minimal sample data for track indexes."""
+        self.db_url = db_url
+        conn = psycopg.connect(db_url, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
+            cur.execute(
+                "INSERT INTO release (id, title) VALUES (1, 'Test Album') ON CONFLICT DO NOTHING"
+            )
+            cur.execute(
+                "INSERT INTO release_track (release_id, sequence, position, title) "
+                "SELECT 1, 1, 'A1', 'Test Track' WHERE NOT EXISTS "
+                "(SELECT 1 FROM release_track WHERE release_id = 1 AND sequence = 1)"
+            )
+            cur.execute(
+                "INSERT INTO release_track_artist (release_id, track_sequence, artist_name) "
+                "SELECT 1, 1, 'Track Artist' WHERE NOT EXISTS "
+                "(SELECT 1 FROM release_track_artist WHERE release_id = 1 AND track_sequence = 1)"
+            )
+        conn.close()
+
+    def test_track_indexes_execute_without_error(self) -> None:
+        """Track indexes can be created after track data is loaded."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            sql = SCHEMA_DIR.joinpath("create_track_indexes.sql").read_text()
+            sql = sql.replace(" CONCURRENTLY", "")
+            cur.execute(sql)
+        conn.close()
+
+    def test_track_trigram_indexes_exist(self) -> None:
+        """Track trigram indexes (release_track, release_track_artist) are created."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            sql = SCHEMA_DIR.joinpath("create_track_indexes.sql").read_text()
+            sql = sql.replace(" CONCURRENTLY", "")
+            cur.execute(sql)
+
+            cur.execute("""
+                SELECT indexname FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname LIKE '%trgm%'
+            """)
+            indexes = {row[0] for row in cur.fetchall()}
+        conn.close()
+        expected = {
+            "idx_release_track_title_trgm",
+            "idx_release_track_artist_name_trgm",
+        }
+        assert expected.issubset(indexes)
+
+    def test_track_fk_constraints_created(self) -> None:
+        """FK constraints on track tables are created."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            sql = SCHEMA_DIR.joinpath("create_track_indexes.sql").read_text()
+            sql = sql.replace(" CONCURRENTLY", "")
+            cur.execute(sql)
+
+            cur.execute("""
+                SELECT tc.constraint_name
+                FROM information_schema.table_constraints tc
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_name IN ('release_track', 'release_track_artist')
+            """)
+            constraints = {row[0] for row in cur.fetchall()}
+        conn.close()
+        expected = {"fk_release_track_release", "fk_release_track_artist_release"}
+        assert expected.issubset(constraints)
+
+    def test_track_fk_indexes_created(self) -> None:
+        """FK indexes on track tables are created."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            sql = SCHEMA_DIR.joinpath("create_track_indexes.sql").read_text()
+            sql = sql.replace(" CONCURRENTLY", "")
+            cur.execute(sql)
+
+            cur.execute("""
+                SELECT indexname FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname LIKE 'idx_release_track%'
+            """)
+            indexes = {row[0] for row in cur.fetchall()}
+        conn.close()
+        expected = {
+            "idx_release_track_release_id",
+            "idx_release_track_artist_release_id",
+        }
+        assert expected.issubset(indexes)
+
+    def test_track_indexes_idempotent(self) -> None:
+        """Running create_track_indexes.sql twice doesn't error."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            sql = SCHEMA_DIR.joinpath("create_track_indexes.sql").read_text()
+            sql = sql.replace(" CONCURRENTLY", "")
+            cur.execute(sql)
+            cur.execute(sql)
+        conn.close()
+
+    def test_all_trigram_indexes_after_both_sql_files(self) -> None:
+        """All four trigram indexes exist after running both SQL files."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            # Need release_artist data for base indexes
+            cur.execute(
+                "INSERT INTO release_artist (release_id, artist_name, extra) "
+                "SELECT 1, 'Test Artist', 0 WHERE NOT EXISTS "
+                "(SELECT 1 FROM release_artist WHERE release_id = 1)"
+            )
+            for sql_file in ("create_indexes.sql", "create_track_indexes.sql"):
+                sql = SCHEMA_DIR.joinpath(sql_file).read_text()
+                sql = sql.replace(" CONCURRENTLY", "")
+                cur.execute(sql)
+
+            cur.execute("""
+                SELECT indexname FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND indexname LIKE '%trgm%'
+            """)
+            indexes = {row[0] for row in cur.fetchall()}
+        conn.close()
+        expected = {
+            "idx_release_artist_name_trgm",
+            "idx_release_title_trgm",
+            "idx_release_track_title_trgm",
+            "idx_release_track_artist_name_trgm",
+        }
+        assert expected.issubset(indexes)
