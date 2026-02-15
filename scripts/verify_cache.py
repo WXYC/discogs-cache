@@ -87,6 +87,7 @@ COMMA_ARTICLES = ("the", "los", "las", "les", "la", "le", "el", "die", "der", "d
 RELEASE_TABLES = [
     ("release", "id"),
     ("release_artist", "release_id"),
+    ("release_label", "release_id"),
     ("release_track", "release_id"),
     ("release_track_artist", "release_id"),
     ("cache_metadata", "release_id"),
@@ -661,6 +662,7 @@ SCHEMA_DIR = SCRIPT_DIR.parent / "schema"
 COPY_TABLE_SPEC = [
     ("release", "id", ["id", "title", "release_year", "artwork_url"]),
     ("release_artist", "release_id", ["release_id", "artist_name", "extra"]),
+    ("release_label", "release_id", ["release_id", "label_name"]),
     ("release_track", "release_id", ["release_id", "sequence", "position", "title", "duration"]),
     (
         "release_track_artist",
@@ -717,6 +719,7 @@ def _create_target_schema(target_url: str) -> None:
             "cache_metadata",
             "release_track_artist",
             "release_track",
+            "release_label",
             "release_artist",
             "release",
         ):
@@ -730,13 +733,16 @@ def _create_target_schema(target_url: str) -> None:
 def _create_target_indexes(target_url: str) -> None:
     """Create functions and indexes on the target database (without CONCURRENTLY)."""
     functions_sql = SCHEMA_DIR.joinpath("create_functions.sql").read_text()
-    indexes_sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
-    indexes_sql = indexes_sql.replace(" CONCURRENTLY", "")
+    base_indexes_sql = SCHEMA_DIR.joinpath("create_indexes.sql").read_text()
+    base_indexes_sql = base_indexes_sql.replace(" CONCURRENTLY", "")
+    track_indexes_sql = SCHEMA_DIR.joinpath("create_track_indexes.sql").read_text()
+    track_indexes_sql = track_indexes_sql.replace(" CONCURRENTLY", "")
 
     conn = psycopg.connect(target_url, autocommit=True)
     with conn.cursor() as cur:
         cur.execute(functions_sql)
-        cur.execute(indexes_sql)
+        cur.execute(base_indexes_sql)
+        cur.execute(track_indexes_sql)
     conn.close()
     logger.info("Created functions and indexes on target database")
 

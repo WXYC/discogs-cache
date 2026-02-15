@@ -90,6 +90,27 @@ class TestImportCsv:
         # 16 rows in fixture CSV (all have required fields)
         assert count == 16
 
+    def test_release_label_row_count(self) -> None:
+        """All label rows imported (one per unique release_id+label pair)."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release_label")
+            count = cur.fetchone()[0]
+        conn.close()
+        # 16 rows in fixture CSV, all unique (release_id, label) pairs
+        assert count == 16
+
+    def test_release_label_column_mapping(self) -> None:
+        """CSV 'label' column maps to DB 'label_name'."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT label_name FROM release_label WHERE release_id = 1001 ORDER BY label_name"
+            )
+            labels = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert labels == ["Capitol Records", "Parlophone"]
+
     def test_release_track_row_count(self) -> None:
         conn = self._connect()
         with conn.cursor() as cur:
@@ -210,6 +231,7 @@ ALL_TABLES = (
     "cache_metadata",
     "release_track_artist",
     "release_track",
+    "release_label",
     "release_artist",
     "release",
 )

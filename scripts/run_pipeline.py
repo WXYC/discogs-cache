@@ -233,6 +233,7 @@ def run_vacuum(db_url: str) -> None:
     tables = [
         "release",
         "release_artist",
+        "release_label",
         "release_track",
         "release_track_artist",
         "cache_metadata",
@@ -260,8 +261,8 @@ def report_sizes(db_url: str) -> None:
                    pg_size_pretty(pg_total_relation_size(relid)) as total_size
             FROM pg_stat_user_tables
             WHERE relname IN (
-                'release', 'release_artist', 'release_track',
-                'release_track_artist', 'cache_metadata'
+                'release', 'release_artist', 'release_label',
+                'release_track', 'release_track_artist', 'cache_metadata'
             )
             ORDER BY pg_total_relation_size(relid) DESC
         """)

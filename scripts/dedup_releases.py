@@ -165,11 +165,14 @@ def add_base_constraints_and_indexes(conn) -> None:
         # FK constraints with CASCADE (base tables only)
         "ALTER TABLE release_artist ADD CONSTRAINT fk_release_artist_release "
         "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
+        "ALTER TABLE release_label ADD CONSTRAINT fk_release_label_release "
+        "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
         "ALTER TABLE cache_metadata ADD CONSTRAINT fk_cache_metadata_release "
         "FOREIGN KEY (release_id) REFERENCES release(id) ON DELETE CASCADE",
         "ALTER TABLE cache_metadata ADD PRIMARY KEY (release_id)",
         # FK indexes (base tables only)
         "CREATE INDEX idx_release_artist_release_id ON release_artist(release_id)",
+        "CREATE INDEX idx_release_label_release_id ON release_label(release_id)",
         # Base trigram indexes for fuzzy search (accent-insensitive via f_unaccent)
         "CREATE INDEX idx_release_artist_name_trgm ON release_artist "
         "USING gin (lower(f_unaccent(artist_name)) gin_trgm_ops)",
@@ -264,6 +267,7 @@ def main():
     tables = [
         ("release", "new_release", "id, title, release_year, artwork_url", "id"),
         ("release_artist", "new_release_artist", "release_id, artist_name, extra", "release_id"),
+        ("release_label", "new_release_label", "release_id, label_name", "release_id"),
         (
             "cache_metadata",
             "new_cache_metadata",
@@ -280,6 +284,7 @@ def main():
     with conn.cursor() as cur:
         for stmt in [
             "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS fk_release_artist_release",
+            "ALTER TABLE release_label DROP CONSTRAINT IF EXISTS fk_release_label_release",
             "ALTER TABLE cache_metadata DROP CONSTRAINT IF EXISTS fk_cache_metadata_release",
         ]:
             cur.execute(stmt)
@@ -311,8 +316,8 @@ def main():
         cur.execute("""
             SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) as total_size
             FROM pg_stat_user_tables
-            WHERE relname IN ('release', 'release_artist', 'release_track',
-                              'release_track_artist', 'cache_metadata')
+            WHERE relname IN ('release', 'release_artist', 'release_label',
+                              'release_track', 'release_track_artist', 'cache_metadata')
             ORDER BY pg_total_relation_size(relid) DESC
         """)
         logger.info("Table sizes:")

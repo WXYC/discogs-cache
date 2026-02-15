@@ -110,7 +110,13 @@ class TestPipeline:
         compilation releases, which may be pruned depending on matching.
         """
         conn = self._connect()
-        for table in ("release", "release_artist", "release_track", "cache_metadata"):
+        for table in (
+            "release",
+            "release_artist",
+            "release_label",
+            "release_track",
+            "cache_metadata",
+        ):
             with conn.cursor() as cur:
                 cur.execute(f"SELECT count(*) FROM {table}")
                 count = cur.fetchone()[0]
@@ -195,7 +201,13 @@ class TestPipeline:
             """)
             fk_tables = {row[0] for row in cur.fetchall()}
         conn.close()
-        expected = {"release_artist", "release_track", "release_track_artist", "cache_metadata"}
+        expected = {
+            "release_artist",
+            "release_label",
+            "release_track",
+            "release_track_artist",
+            "cache_metadata",
+        }
         assert expected.issubset(fk_tables)
 
     def test_null_title_release_not_imported(self) -> None:
@@ -379,7 +391,13 @@ class TestPipelineWithCopyTo:
     def test_target_tables_populated(self) -> None:
         """Core tables in target have rows."""
         conn = psycopg.connect(self.target_url)
-        for table in ("release", "release_artist", "release_track", "cache_metadata"):
+        for table in (
+            "release",
+            "release_artist",
+            "release_label",
+            "release_track",
+            "cache_metadata",
+        ):
             with conn.cursor() as cur:
                 cur.execute(f"SELECT count(*) FROM {table}")
                 count = cur.fetchone()[0]

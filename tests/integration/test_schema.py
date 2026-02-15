@@ -40,6 +40,7 @@ class TestCreateDatabase:
         expected = {
             "release",
             "release_artist",
+            "release_label",
             "release_track",
             "release_track_artist",
             "cache_metadata",
@@ -59,6 +60,7 @@ class TestCreateDatabase:
         [
             ("release", {"id", "title", "release_year", "artwork_url", "master_id"}),
             ("release_artist", {"release_id", "artist_name", "extra"}),
+            ("release_label", {"release_id", "label_name"}),
             ("release_track", {"release_id", "sequence", "position", "title", "duration"}),
             ("release_track_artist", {"release_id", "track_sequence", "artist_name"}),
             ("cache_metadata", {"release_id", "cached_at", "source", "last_validated"}),
@@ -66,6 +68,7 @@ class TestCreateDatabase:
         ids=[
             "release",
             "release_artist",
+            "release_label",
             "release_track",
             "release_track_artist",
             "cache_metadata",
@@ -127,6 +130,7 @@ class TestCreateDatabase:
         conn.close()
         expected_fk_tables = {
             "release_artist",
+            "release_label",
             "release_track",
             "release_track_artist",
             "cache_metadata",
@@ -145,7 +149,7 @@ class TestCreateDatabase:
                 SELECT tc.table_name, tc.constraint_name
                 FROM information_schema.table_constraints tc
                 WHERE tc.constraint_type = 'UNIQUE'
-                  AND tc.table_name IN ('release_artist', 'release_track_artist')
+                  AND tc.table_name IN ('release_artist', 'release_label', 'release_track_artist')
             """)
             unique_constraints = cur.fetchall()
         conn.close()

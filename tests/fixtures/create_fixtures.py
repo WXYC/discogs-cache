@@ -184,6 +184,44 @@ def create_release_track_artist_csv() -> None:
     write_csv("release_track_artist.csv", headers, rows)
 
 
+def create_release_label_csv() -> None:
+    """Create release_label.csv with label names for releases.
+
+    Includes:
+    - Multiple labels per release (release 1001 has Parlophone and Capitol Records)
+    - Labels for releases in the same dedup group (1001, 1002, 1003)
+    - Labels for releases that won't match the library (5001, 5002)
+    """
+    headers = ["release_id", "label", "catno"]
+    rows = [
+        # Radiohead - OK Computer (dedup group, master_id 500)
+        [1001, "Parlophone", "7243 8 55229 2 8"],
+        [1001, "Capitol Records", "CDP 7243 8 55229 2 8"],
+        [1002, "Capitol Records", "C1-55229"],
+        [1003, "EMI", "TOCP-50201"],
+        # Joy Division - Unknown Pleasures (dedup group, master_id 600)
+        [2001, "Factory Records", "FACT 10"],
+        [2002, "Qwest Records", "1-25840"],
+        # Unique releases
+        [3001, "Parlophone", "7243 5 27753 2 3"],
+        [4001, "Parlophone", "7243 5 32764 2 8"],
+        # Won't match library
+        [5001, "Unknown Label", "UNK-001"],
+        [5002, "Mystery Records", "MYS-002"],
+        # Bjork
+        [6001, "One Little Indian", "TPLP 71 CD"],
+        # Compilation
+        [8001, "Sugar Hill Records", "SH-542"],
+        # Beatles, Simon & Garfunkel
+        [9001, "Apple Records", "PCS 7088"],
+        [9002, "Columbia", "KCS 9914"],
+        # Not in library
+        [10001, "Random Label", "RL-001"],
+        [10002, "Obscure Label", "OL-002"],
+    ]
+    write_csv("release_label.csv", headers, rows)
+
+
 def create_release_image_csv() -> None:
     """Create release_image.csv for artwork URL testing."""
     headers = ["release_id", "type", "width", "height", "uri"]
@@ -290,6 +328,7 @@ def main() -> None:
     create_release_artist_csv()
     create_release_track_csv()
     create_release_track_artist_csv()
+    create_release_label_csv()
     create_release_image_csv()
     print()
     print("Library data:")

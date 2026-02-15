@@ -2,7 +2,7 @@
 """Import Discogs CSV files into PostgreSQL with proper multiline handling.
 
 Imports only the columns needed by the optimized schema (see 04-create-database.sql).
-Dropped tables (release_label, release_genre, release_style, artist) are skipped.
+Dropped tables (release_genre, release_style, artist) are skipped.
 The release_image.csv is processed separately to populate artwork_url on release.
 """
 
@@ -60,13 +60,14 @@ def count_tracks_from_csv(csv_path: Path) -> dict[int, int]:
     return counts
 
 
-class TableConfig(TypedDict):
+class TableConfig(TypedDict, total=False):
     csv_file: str
     table: str
     csv_columns: list[str]
     db_columns: list[str]
     required: list[str]
     transforms: dict[str, Callable[[str | None], str | None]]
+    unique_key: list[str]
 
 
 BASE_TABLES: list[TableConfig] = [
@@ -86,6 +87,15 @@ BASE_TABLES: list[TableConfig] = [
         "required": ["release_id"],
         "transforms": {},
         "unique_key": ["release_id", "artist_name"],
+    },
+    {
+        "csv_file": "release_label.csv",
+        "table": "release_label",
+        "csv_columns": ["release_id", "label"],
+        "db_columns": ["release_id", "label_name"],
+        "required": ["release_id", "label"],
+        "transforms": {},
+        "unique_key": ["release_id", "label"],
     },
 ]
 
@@ -386,7 +396,7 @@ def main():
     mode.add_argument(
         "--base-only",
         action="store_true",
-        help="Import only base tables (release, release_artist) "
+        help="Import only base tables (release, release_artist, release_label) "
         "plus artwork, cache_metadata, and track counts",
     )
     mode.add_argument(

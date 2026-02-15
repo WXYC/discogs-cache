@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS release_artist (
     extra           integer DEFAULT 0  -- 0 = main artist, 1 = extra credit
 );
 
+-- Labels on releases
+CREATE TABLE IF NOT EXISTS release_label (
+    release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
+    label_name      text NOT NULL
+);
+
 -- Tracks on releases
 CREATE TABLE IF NOT EXISTS release_track (
     release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
@@ -69,6 +75,7 @@ CREATE TABLE IF NOT EXISTS cache_metadata (
 
 -- Foreign key indexes
 CREATE INDEX IF NOT EXISTS idx_release_artist_release_id ON release_artist(release_id);
+CREATE INDEX IF NOT EXISTS idx_release_label_release_id ON release_label(release_id);
 CREATE INDEX IF NOT EXISTS idx_release_track_release_id ON release_track(release_id);
 CREATE INDEX IF NOT EXISTS idx_release_track_artist_release_id ON release_track_artist(release_id);
 
