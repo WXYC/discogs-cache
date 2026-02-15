@@ -4,7 +4,7 @@
 
 ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release data, filtered to artists in the WXYC radio library catalog. The cache database is a shared resource consumed by multiple services:
 
-- **request-parser** (Python/FastAPI) - `discogs/cache_service.py` queries the cache for album lookups
+- **request-o-matic** (Python/FastAPI) - `discogs/cache_service.py` queries the cache for album lookups
 - **Backend-Service** (TypeScript/Node.js) - future consumer for Discogs data
 
 ## Architecture
@@ -15,7 +15,7 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 2. **Convert** XML to CSV using [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) (not a PyPI package; must be cloned separately)
 3. **Fix newlines** in CSV fields (`scripts/fix_csv_newlines.py`)
 4. **Enrich** `library_artists.txt` with WXYC cross-references (`scripts/enrich_library_artists.py`, optional)
-5. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`) -- ~70% data reduction
+5. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`), with diacritics normalization -- ~70% data reduction
 6. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`)
 7. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
 8. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
@@ -62,7 +62,7 @@ docker compose up db -d     # just the database (for tests)
 
 - `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-11, --csv-dir for steps 6-11)
 - `scripts/enrich_library_artists.py` -- Enrich artist list with WXYC cross-references (pymysql)
-- `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists
+- `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists (strips diacritics for matching)
 - `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
 - `scripts/dedup_releases.py` -- Deduplicate releases by master_id (copy-swap with `DROP CASCADE`)
 - `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB
@@ -71,15 +71,16 @@ docker compose up db -d     # just the database (for tests)
 - `lib/matching.py` -- Compilation detection utility
 - `lib/pipeline_state.py` -- Pipeline state tracking for resumable runs
 - `lib/db_introspect.py` -- Database introspection for inferring pipeline state on resume
+- `docs/discogs-cache-technical-overview.md` -- Design rationale, benchmarks, and pipeline architecture details
 
 ### External Inputs
 
-Two files are inputs to the ETL but produced by request-parser:
+Two files are inputs to the ETL but produced by request-o-matic:
 
 1. **`library_artists.txt`** -- One artist name per line, used by `filter_csv.py`
 2. **`library.db`** -- SQLite database, used by `verify_cache.py` for KEEP/PRUNE classification
 
-Both are produced by request-parser's library sync (`scripts/sync-library.sh`).
+Both are produced by request-o-matic's library sync (`scripts/sync-library.sh`).
 
 ## Development
 

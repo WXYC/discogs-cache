@@ -43,7 +43,7 @@ The pipeline filters data in two stages to make the 48 GB dump manageable:
 
 ### Artist name enrichment (step 4)
 
-Stage 1 uses exact name matching, which misses releases credited under alternate names. The enrichment step addresses this by expanding the artist list with data from the WXYC catalog database:
+Stage 1 uses normalized name matching (case-insensitive, diacritics stripped), which misses releases credited under alternate names. The enrichment step addresses this by expanding the artist list with data from the WXYC catalog database:
 
 ##### Alternate artist names
 Releases filed under one artist but credited to another (e.g., "Body Count" filed under Ice-T, "Bobby Digital" filed under RZA). Source: `LIBRARY_RELEASE.ALTERNATE_ARTIST_NAME` (~3,935 names).
@@ -213,7 +213,7 @@ venv/bin/python scripts/benchmark_requests.py --staging --skip-warmup
 
 ## Consumers
 
-- **request-parser** (Python/FastAPI) — `discogs/cache_service.py` queries the cache for album lookups, track validation, and artwork
+- **request-o-matic** (Python/FastAPI) — `discogs/cache_service.py` queries the cache for album lookups, track validation, and artwork
 - **Backend-Service** (TypeScript/Node.js) — planned
 
 ## Repository

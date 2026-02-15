@@ -16,7 +16,7 @@ The pipeline processes monthly Discogs data dumps (~40 GB XML) into a focused Po
 - PostgreSQL with the `pg_trgm` and `unaccent` extensions (or use [Docker Compose](#docker-compose))
 - Discogs monthly data dump (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
 - [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) -- clone separately; not a PyPI package
-- `library_artists.txt` and `library.db` (produced by request-parser's library sync)
+- `library_artists.txt` and `library.db` (produced by request-o-matic's library sync)
 
 ## Setup
 
@@ -33,7 +33,7 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 | 1. Convert | discogs-xml2db | XML data dump to CSV |
 | 2. Fix newlines | `scripts/fix_csv_newlines.py` | Clean embedded newlines in CSV fields |
 | 2.5. Enrich | `scripts/enrich_library_artists.py` | Enrich artist list with cross-references (optional) |
-| 3. Filter | `scripts/filter_csv.py` | Keep only library artists (~70% reduction) |
+| 3. Filter | `scripts/filter_csv.py` | Keep only library artists, with diacritics normalization (~70% reduction) |
 | 4. Create schema | `schema/create_database.sql`, `schema/create_functions.sql` | Set up tables, extensions, and functions |
 | 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
 | 6. Create indexes | `schema/create_indexes.sql` | Accent-insensitive trigram GIN indexes for fuzzy search |
@@ -214,7 +214,7 @@ DATABASE_URL_DISCOGS=postgresql://user:pass@host:5432/discogs
 ```
 
 Current consumers:
-- **request-parser** (`discogs/cache_service.py`) - Python/asyncpg
+- **request-o-matic** (`discogs/cache_service.py`) - Python/asyncpg
 - **Backend-Service** - TypeScript/Node.js (planned)
 
 ## Testing
@@ -248,3 +248,7 @@ docker compose up db -d
 The `migrations/` directory contains historical one-time migrations:
 
 - `01_optimize_schema.sql` - Initial schema optimization (drops unused tables/columns, adds artwork_url and release_year, deduplicates by master_id). Already applied to the production database.
+
+## Documentation
+
+- [Cache Technical Overview](docs/discogs-cache-technical-overview.md) -- design rationale, benchmarks, and pipeline architecture details
