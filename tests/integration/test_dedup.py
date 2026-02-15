@@ -42,6 +42,7 @@ ALL_TABLES = (
     "cache_metadata",
     "release_track_artist",
     "release_track",
+    "release_label",
     "release_artist",
     "release",
 )
@@ -113,6 +114,12 @@ def _run_dedup(db_url: str) -> None:
                 "release_id",
             ),
             (
+                "release_label",
+                "new_release_label",
+                "release_id, label_name",
+                "release_id",
+            ),
+            (
                 "cache_metadata",
                 "new_cache_metadata",
                 "release_id, cached_at, source, last_validated",
@@ -127,6 +134,7 @@ def _run_dedup(db_url: str) -> None:
         with conn.cursor() as cur:
             for stmt in [
                 "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS fk_release_artist_release",
+                "ALTER TABLE release_label DROP CONSTRAINT IF EXISTS fk_release_label_release",
                 "ALTER TABLE cache_metadata DROP CONSTRAINT IF EXISTS fk_cache_metadata_release",
             ]:
                 cur.execute(stmt)
@@ -225,11 +233,34 @@ class TestDedup:
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM release_artist WHERE release_id = 1001")
             artist_count = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM release_label WHERE release_id = 1001")
+            label_count = cur.fetchone()[0]
             cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1001")
             track_count = cur.fetchone()[0]
         conn.close()
         assert artist_count == 0
+        assert label_count == 0
         assert track_count == 0
+
+    def test_kept_release_labels_preserved(self) -> None:
+        """The kept release still has its labels after dedup."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT label_name FROM release_label WHERE release_id = 1002 ORDER BY label_name"
+            )
+            labels = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert labels == ["Capitol Records"]
+
+    def test_deduped_release_has_no_labels(self) -> None:
+        """Releases removed by dedup have no labels."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release_label WHERE release_id = 1001")
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 0
 
     def test_kept_release_tracks_preserved(self) -> None:
         """The kept release still has its tracks (imported after dedup)."""
@@ -275,7 +306,7 @@ class TestDedup:
             """)
             fk_tables = {row[0] for row in cur.fetchall()}
         conn.close()
-        expected = {"release_artist", "cache_metadata"}
+        expected = {"release_artist", "release_label", "cache_metadata"}
         assert expected.issubset(fk_tables)
 
     def test_deduped_release_has_no_tracks(self) -> None:

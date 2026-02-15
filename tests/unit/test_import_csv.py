@@ -111,7 +111,7 @@ class TestTablesConfig:
 
     @pytest.mark.parametrize(
         "table_name",
-        ["release", "release_artist", "release_track", "release_track_artist"],
+        ["release", "release_artist", "release_label", "release_track", "release_track_artist"],
     )
     def test_table_has_csv_file(self, table_name: str) -> None:
         """Each table config specifies a CSV file."""
@@ -129,7 +129,7 @@ class TestTablesConfig:
 
     def test_tables_with_unique_constraints_have_unique_key(self) -> None:
         """Tables with unique constraints must specify unique_key for dedup during import."""
-        tables_needing_dedup = {"release_artist", "release_track_artist"}
+        tables_needing_dedup = {"release_artist", "release_label", "release_track_artist"}
         for table_config in TABLES:
             if table_config["table"] in tables_needing_dedup:
                 assert "unique_key" in table_config, (
@@ -176,6 +176,20 @@ class TestColumnHeaderDetection:
         for col in ra_config["csv_columns"]:
             assert col in headers, (
                 f"Expected column {col!r} not in release_artist.csv headers: {headers}"
+            )
+
+    def test_release_label_csv_has_expected_columns(self) -> None:
+        import csv as csv_mod
+
+        csv_path = Path(__file__).parent.parent / "fixtures" / "csv" / "release_label.csv"
+        with open(csv_path) as f:
+            reader = csv_mod.DictReader(f)
+            headers = reader.fieldnames
+        assert headers is not None
+        rl_config = next(t for t in TABLES if t["table"] == "release_label")
+        for col in rl_config["csv_columns"]:
+            assert col in headers, (
+                f"Expected column {col!r} not in release_label.csv headers: {headers}"
             )
 
 
@@ -230,9 +244,9 @@ class TestTableSplit:
     def test_tables_is_union(self) -> None:
         assert TABLES == BASE_TABLES + TRACK_TABLES
 
-    def test_base_tables_are_release_and_release_artist(self) -> None:
+    def test_base_tables_names(self) -> None:
         names = [t["table"] for t in BASE_TABLES]
-        assert names == ["release", "release_artist"]
+        assert names == ["release", "release_artist", "release_label"]
 
     def test_track_tables_are_release_track_and_release_track_artist(self) -> None:
         names = [t["table"] for t in TRACK_TABLES]
