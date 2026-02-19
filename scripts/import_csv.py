@@ -74,8 +74,8 @@ BASE_TABLES: list[TableConfig] = [
     {
         "csv_file": "release.csv",
         "table": "release",
-        "csv_columns": ["id", "title", "released", "master_id"],
-        "db_columns": ["id", "title", "release_year", "master_id"],
+        "csv_columns": ["id", "title", "country", "released", "master_id"],
+        "db_columns": ["id", "title", "country", "release_year", "master_id"],
         "required": ["id", "title"],
         "transforms": {"released": extract_year},
     },

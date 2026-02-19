@@ -37,7 +37,7 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 | 4. Create schema | `schema/create_database.sql`, `schema/create_functions.sql` | Set up tables, extensions, and functions |
 | 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
 | 6. Create indexes | `schema/create_indexes.sql` | Accent-insensitive trigram GIN indexes for fuzzy search |
-| 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (most tracks) |
+| 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (US first, then most tracks) |
 | 8. Prune/Copy | `scripts/verify_cache.py` | Remove non-library releases or copy matches to target DB |
 | 9. Vacuum | `VACUUM FULL` | Reclaim disk space |
 
@@ -193,7 +193,7 @@ The schema files in `schema/` define the shared contract between this ETL pipeli
 
 | Table | Description |
 |-------|-------------|
-| `release` | Release metadata: id, title, release_year, artwork_url |
+| `release` | Release metadata: id, title, release_year, country, artwork_url |
 | `release_artist` | Artists on releases (main + extra credits) |
 | `release_track` | Tracks on releases with position and duration |
 | `release_track_artist` | Artists on specific tracks (for compilations) |

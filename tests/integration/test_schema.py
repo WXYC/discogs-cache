@@ -58,7 +58,7 @@ class TestCreateDatabase:
     @pytest.mark.parametrize(
         "table, expected_columns",
         [
-            ("release", {"id", "title", "release_year", "artwork_url", "master_id"}),
+            ("release", {"id", "title", "release_year", "country", "artwork_url", "master_id"}),
             ("release_artist", {"release_id", "artist_name", "extra"}),
             ("release_label", {"release_id", "label_name"}),
             ("release_track", {"release_id", "sequence", "position", "title", "duration"}),

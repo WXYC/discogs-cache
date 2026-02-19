@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS release (
     id              integer PRIMARY KEY,
     title           text NOT NULL,
     release_year    smallint,
+    country         text,
     artwork_url     text,
     master_id       integer          -- used by dedup, dropped after dedup copy-swap
 );

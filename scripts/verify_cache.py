@@ -660,7 +660,7 @@ SCHEMA_DIR = SCRIPT_DIR.parent / "schema"
 # Tables and their columns to copy (post-dedup: no master_id).
 # Each entry: (table_name, filter_column, columns_list)
 COPY_TABLE_SPEC = [
-    ("release", "id", ["id", "title", "release_year", "artwork_url"]),
+    ("release", "id", ["id", "title", "release_year", "country", "artwork_url"]),
     ("release_artist", "release_id", ["release_id", "artist_name", "extra"]),
     ("release_label", "release_id", ["release_id", "label_name"]),
     ("release_track", "release_id", ["release_id", "sequence", "position", "title", "duration"]),

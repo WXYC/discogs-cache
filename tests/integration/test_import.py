@@ -312,7 +312,7 @@ class TestTrackCountTable:
             cur.execute("SELECT track_count FROM release_track_count WHERE release_id = 1002")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 5
+        assert count == 3
 
     def test_track_tables_empty(self) -> None:
         """Base-only import should not populate track tables."""
@@ -396,13 +396,13 @@ class TestFilteredTrackImport:
         assert count == 0
 
     def test_included_release_has_correct_track_count(self) -> None:
-        """Release 1002 should have all 5 tracks."""
+        """Release 1002 should have all 3 tracks."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1002")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 5
+        assert count == 3
 
     def test_total_track_count(self) -> None:
         """Total tracks should be the sum for the filtered releases."""
@@ -411,5 +411,5 @@ class TestFilteredTrackImport:
             cur.execute("SELECT count(*) FROM release_track")
             count = cur.fetchone()[0]
         conn.close()
-        # 1002: 5, 3001: 2, 4001: 2 = 9
-        assert count == 9
+        # 1002: 3, 3001: 2, 4001: 2 = 7
+        assert count == 7

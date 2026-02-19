@@ -19,7 +19,7 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 6. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`)
 7. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
 8. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
-9. **Deduplicate** by master_id (`scripts/dedup_releases.py`)
+9. **Deduplicate** by master_id (`scripts/dedup_releases.py`) -- prefers US releases, then most tracks, then lowest ID
 10. **Prune or Copy-to** -- one of:
     - `--prune`: delete non-matching releases in place (~89% data reduction, 3 GB -> 340 MB)
     - `--copy-to`/`--target-db-url`: copy matched releases to a separate database, preserving the full import
@@ -36,6 +36,8 @@ Step 1 (download) is always manual.
 ### master_id Column Lifecycle
 
 The `release` table includes a `master_id` column used during import and dedup. The dedup copy-swap strategy (`CREATE TABLE AS SELECT ...` without `master_id`) drops the column automatically. After dedup, `master_id` no longer exists in the schema.
+
+The `country` column, by contrast, is permanent -- it is included in the dedup copy-swap SELECT list and persists in the final schema for consumers.
 
 ### Database Schema (Shared Contract)
 
@@ -64,7 +66,7 @@ docker compose up db -d     # just the database (for tests)
 - `scripts/enrich_library_artists.py` -- Enrich artist list with WXYC cross-references (pymysql)
 - `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists (strips diacritics for matching)
 - `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
-- `scripts/dedup_releases.py` -- Deduplicate releases by master_id (copy-swap with `DROP CASCADE`)
+- `scripts/dedup_releases.py` -- Deduplicate releases by master_id, preferring US releases (copy-swap with `DROP CASCADE`)
 - `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB
 - `scripts/csv_to_tsv.py` -- CSV to TSV conversion utility
 - `scripts/fix_csv_newlines.py` -- Fix multiline CSV fields

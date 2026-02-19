@@ -339,5 +339,14 @@ class TestCopyToTarget:
         # Actually the target gets the full schema including master_id,
         # but since we only copy id, title, release_year, artwork_url,
         # master_id will be NULL. That's acceptable.
-        expected = {"id", "title", "release_year", "artwork_url"}
+        expected = {"id", "title", "release_year", "country", "artwork_url"}
         assert expected.issubset(columns)
+
+    def test_target_country_data_copied(self) -> None:
+        """Country data is actually present in the target (not just the column)."""
+        conn = psycopg.connect(self.target_url)
+        with conn.cursor() as cur:
+            cur.execute("SELECT country FROM release WHERE country IS NOT NULL LIMIT 1")
+            result = cur.fetchone()
+        conn.close()
+        assert result is not None, "No country data found in target releases"

@@ -209,4 +209,4 @@ class TestFilterCsvFile:
         output_path = tmp_path / "release_track_filtered.csv"
 
         _, output_count = filter_csv_file(input_path, output_path, matching_ids, "release_id")
-        assert output_count == 3  # Release 1001 has 3 tracks
+        assert output_count == 5  # Release 1001 has 5 tracks

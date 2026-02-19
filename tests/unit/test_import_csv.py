@@ -103,6 +103,12 @@ class TestTablesConfig:
         assert "master_id" in release_config["csv_columns"]
         assert "master_id" in release_config["db_columns"]
 
+    def test_release_table_includes_country(self) -> None:
+        """The release table must import country for US-preferred dedup ranking."""
+        release_config = next(t for t in TABLES if t["table"] == "release")
+        assert "country" in release_config["csv_columns"]
+        assert "country" in release_config["db_columns"]
+
     def test_release_table_transforms_released_to_year(self) -> None:
         """The released field should be transformed via extract_year."""
         release_config = next(t for t in TABLES if t["table"] == "release")
@@ -205,8 +211,8 @@ class TestCountTracksFromCsv:
         """Returns a dict mapping release_id -> track count."""
         csv_path = CSV_DIR / "release_track.csv"
         counts = count_tracks_from_csv(csv_path)
-        # Release 1002 has 5 tracks in the fixture data
-        assert counts[1002] == 5
+        # Release 1002 (US) has 3 tracks in the fixture data
+        assert counts[1002] == 3
 
     def test_all_releases_counted(self) -> None:
         """Every release_id in the CSV has an entry."""
