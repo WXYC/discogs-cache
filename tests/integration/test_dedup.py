@@ -106,7 +106,7 @@ def _run_dedup(db_url: str) -> None:
     if delete_count > 0:
         # Only base tables + cache_metadata (no track tables)
         tables = [
-            ("release", "new_release", "id, title, release_year, artwork_url", "id"),
+            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
             (
                 "release_artist",
                 "new_release_artist",
@@ -192,7 +192,7 @@ class TestDedup:
         return psycopg.connect(self.db_url)
 
     def test_correct_release_kept_for_master_500(self) -> None:
-        """Release 1002 (5 tracks) kept over 1001 (3 tracks) and 1003 (1 track)."""
+        """Release 1002 (US, 3 tracks) kept over 1001 (UK, 5 tracks) by country preference."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
@@ -201,7 +201,7 @@ class TestDedup:
         assert ids == [1002]
 
     def test_correct_release_kept_for_master_600(self) -> None:
-        """Release 2002 (4 tracks) kept over 2001 (2 tracks)."""
+        """Release 2002 (DE, 4 tracks) kept over 2001 (UK, 2 tracks) by track count fallback."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id")
@@ -269,7 +269,36 @@ class TestDedup:
             cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1002")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 5
+        assert count == 3
+
+    def test_country_column_preserved(self) -> None:
+        """country column exists after dedup copy-swap and has the expected value."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT country FROM release WHERE id = 1002")
+            country = cur.fetchone()[0]
+        conn.close()
+        assert country == "US"
+
+    def test_us_preferred_over_track_count(self) -> None:
+        """US release (1002, 3 tracks) kept over UK release (1001, 5 tracks).
+
+        Proves country preference is the deciding factor: the kept release has
+        fewer tracks than the removed one.
+        """
+        conn = self._connect()
+        with conn.cursor() as cur:
+            # 1002 should be kept (US, 3 tracks)
+            cur.execute("SELECT count(*) FROM release WHERE id = 1002")
+            assert cur.fetchone()[0] == 1
+            # 1001 should be removed (UK, 5 tracks — more tracks but not US)
+            cur.execute("SELECT count(*) FROM release WHERE id = 1001")
+            assert cur.fetchone()[0] == 0
+            # Verify the kept release has fewer tracks (proving country was decisive)
+            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1002")
+            kept_tracks = cur.fetchone()[0]
+        conn.close()
+        assert kept_tracks == 3, "Kept US release should have 3 tracks (fewer than removed UK's 5)"
 
     def test_master_id_column_dropped(self) -> None:
         """master_id column no longer exists after copy-swap (not in SELECT list)."""

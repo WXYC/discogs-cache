@@ -127,7 +127,7 @@ class TestPipeline:
         """Duplicate releases (same master_id) have been removed.
 
         In the fixture data, releases 1001, 1002, 1003 share master_id 500.
-        After dedup, only release 1002 (5 tracks, the most) should remain.
+        After dedup, only release 1002 (US pressing) should remain.
         """
         conn = self._connect()
         with conn.cursor() as cur:
@@ -170,6 +170,18 @@ class TestPipeline:
             result = cur.fetchone()
         conn.close()
         assert result is None, "master_id column should not exist after dedup"
+
+    def test_country_column_present(self) -> None:
+        """country column persists through the dedup copy-swap."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'release' AND column_name = 'country'"
+            )
+            result = cur.fetchone()
+        conn.close()
+        assert result is not None, "country column should exist after dedup"
 
     def test_indexes_exist(self) -> None:
         """Trigram indexes exist on the final database."""

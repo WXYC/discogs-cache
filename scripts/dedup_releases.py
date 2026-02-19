@@ -91,7 +91,8 @@ def ensure_dedup_ids(conn) -> int:
                 SELECT r.id, r.master_id,
                        ROW_NUMBER() OVER (
                            PARTITION BY r.master_id
-                           ORDER BY tc.track_count DESC, r.id ASC
+                           ORDER BY (r.country = 'US')::int DESC,
+                                    tc.track_count DESC, r.id ASC
                        ) as rn
                 FROM release r
                 {track_count_join}
@@ -265,7 +266,7 @@ def main():
     # Step 2: Copy each table (keeping only non-duplicate rows)
     # Only base tables + cache_metadata (tracks are imported after dedup)
     tables = [
-        ("release", "new_release", "id, title, release_year, artwork_url", "id"),
+        ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
         ("release_artist", "new_release_artist", "release_id, artist_name, extra", "release_id"),
         ("release_label", "new_release_label", "release_id, label_name", "release_id"),
         (

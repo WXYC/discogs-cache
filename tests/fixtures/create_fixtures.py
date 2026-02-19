@@ -52,15 +52,16 @@ def create_release_csv() -> None:
     ]
     rows = [
         # Group 1: duplicate master_id 500 (Radiohead - OK Computer variants)
-        # Release 1001 has 3 tracks, 1002 has 5 tracks, 1003 has 1 track
-        # Dedup should keep 1002 (most tracks)
+        # Release 1001 has 5 tracks (UK), 1002 has 3 tracks (US), 1003 has 1 track (JP)
+        # Dedup should keep 1002 (US country preference beats higher track count)
         [1001, "Accepted", "OK Computer", "UK", "1997-06-16", "", "Correct", 500, "CD"],
         [1002, "Accepted", "OK Computer", "US", "1997-07-01", "", "Correct", 500, "Vinyl"],
         [1003, "Accepted", "OK Computer", "JP", "1997", "", "Correct", 500, "Cassette"],
         # Group 2: duplicate master_id 600 (Joy Division - Unknown Pleasures)
-        # Release 2001 has 2 tracks, 2002 has 4 tracks
+        # Release 2001 has 2 tracks (UK), 2002 has 4 tracks (DE) — no US release
+        # Dedup should keep 2002 (most tracks, fallback when no US release)
         [2001, "Accepted", "Unknown Pleasures", "UK", "1979-06-15", "", "Correct", 600, "LP"],
-        [2002, "Accepted", "Unknown Pleasures", "US", "1979", "", "Correct", 600, "CD"],
+        [2002, "Accepted", "Unknown Pleasures", "DE", "1979", "", "Correct", 600, "CD"],
         # No duplicate - unique master_id
         [3001, "Accepted", "Kid A", "UK", "2000-10-02", "", "Correct", 700, "CD"],
         # No master_id (should survive dedup)
@@ -125,22 +126,22 @@ def create_release_track_csv() -> None:
     """
     headers = ["release_id", "sequence", "position", "title", "duration"]
     rows = [
-        # Release 1001 (OK Computer UK CD) - 3 tracks
+        # Release 1001 (OK Computer UK CD) - 5 tracks (most tracks, but not US)
         [1001, 1, "1", "Airbag", "4:44"],
         [1001, 2, "2", "Paranoid Android", "6:23"],
         [1001, 3, "3", "Subterranean Homesick Alien", "4:27"],
-        # Release 1002 (OK Computer US Vinyl) - 5 tracks (should win dedup)
+        [1001, 4, "4", "Exit Music (For a Film)", "4:24"],
+        [1001, 5, "5", "Let Down", "4:59"],
+        # Release 1002 (OK Computer US Vinyl) - 3 tracks (US wins despite fewer tracks)
         [1002, 1, "A1", "Airbag", "4:44"],
         [1002, 2, "A2", "Paranoid Android", "6:23"],
         [1002, 3, "A3", "Subterranean Homesick Alien", "4:27"],
-        [1002, 4, "B1", "Exit Music (For a Film)", "4:24"],
-        [1002, 5, "B2", "Let Down", "4:59"],
         # Release 1003 (OK Computer JP Cassette) - 1 track
         [1003, 1, "1", "Airbag", "4:44"],
         # Release 2001 (Unknown Pleasures UK LP) - 2 tracks
         [2001, 1, "A1", "Disorder", "3:29"],
         [2001, 2, "A2", "Day of the Lords", "4:48"],
-        # Release 2002 (Unknown Pleasures US CD) - 4 tracks (should win dedup)
+        # Release 2002 (Unknown Pleasures DE CD) - 4 tracks (wins by track count, no US)
         [2002, 1, "1", "Disorder", "3:29"],
         [2002, 2, "2", "Day of the Lords", "4:48"],
         [2002, 3, "3", "Candidate", "3:05"],
