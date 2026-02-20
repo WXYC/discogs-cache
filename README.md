@@ -37,7 +37,7 @@ All 9 steps are automated by `run_pipeline.py` (or Docker Compose). The script s
 | 4. Create schema | `schema/create_database.sql`, `schema/create_functions.sql` | Set up tables, extensions, and functions |
 | 5. Import | `scripts/import_csv.py` | Bulk load CSVs via psycopg COPY |
 | 6. Create indexes | `schema/create_indexes.sql` | Accent-insensitive trigram GIN indexes for fuzzy search |
-| 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (US first, then most tracks) |
+| 7. Deduplicate | `scripts/dedup_releases.py` | Keep best release per master_id (label match, US, most tracks) |
 | 8. Prune/Copy | `scripts/verify_cache.py` | Remove non-library releases or copy matches to target DB |
 | 9. Vacuum | `VACUUM FULL` | Reclaim disk space |
 
@@ -95,7 +95,37 @@ python scripts/run_pipeline.py \
 ```
 
 - `--library-db` is optional; if omitted, the prune step is skipped
+- `--library-labels` accepts a pre-generated `library_labels.csv` for label-aware dedup (see below)
 - `--database-url` defaults to `DATABASE_URL` env var or `postgresql://localhost:5432/discogs`
+
+### Label-Aware Dedup
+
+By default, dedup keeps the release with the most tracks per `master_id` group. When WXYC label preferences are available, dedup instead prefers the release whose Discogs label matches WXYC's known pressing -- ensuring the cached edition matches what the station actually owns.
+
+Label preferences come from WXYC's `FLOWSHEET_ENTRY_PROD` MySQL table (rotation play entries include `LABEL_NAME`). The extraction script `scripts/extract_library_labels.py` produces a `library_labels.csv` with `(artist_name, release_title, label_name)` triples.
+
+There are two ways to enable label-aware dedup:
+
+1. **Automatic extraction** (when `--wxyc-db-url` is provided): the pipeline extracts labels from MySQL before the dedup step.
+
+2. **Pre-generated CSV** (when `--library-labels` is provided): the pipeline uses the CSV directly, no MySQL connection needed.
+
+```bash
+# Automatic: extract labels from WXYC MySQL and use for dedup
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/filtered/ \
+  --library-db /path/to/library.db \
+  --wxyc-db-url mysql://user:pass@host:port/wxycmusic \
+  --database-url postgresql://localhost:5432/discogs
+
+# Pre-generated: use an existing library_labels.csv
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/filtered/ \
+  --library-labels /path/to/library_labels.csv \
+  --database-url postgresql://localhost:5432/discogs
+```
+
+The ranking order is: **label match** (prefer WXYC's pressing) > **US country** (domestic pressing) > **track count** (quality tiebreaker) > **release ID** (deterministic fallback).
 
 ### Copy to Target Database
 
@@ -172,8 +202,9 @@ python scripts/import_csv.py /path/to/filtered/ [database_url]
 # 6. Create indexes (10-30 min on large datasets)
 psql -d discogs -f schema/create_indexes.sql
 
-# 7. Deduplicate
+# 7. Deduplicate (optionally with label matching)
 python scripts/dedup_releases.py [database_url]
+python scripts/dedup_releases.py --library-labels /path/to/library_labels.csv [database_url]
 
 # 8. Prune (dry run first, then with --prune or --copy-to)
 python scripts/verify_cache.py /path/to/library.db [database_url]
@@ -195,6 +226,7 @@ The schema files in `schema/` define the shared contract between this ETL pipeli
 |-------|-------------|
 | `release` | Release metadata: id, title, release_year, country, artwork_url |
 | `release_artist` | Artists on releases (main + extra credits) |
+| `release_label` | Label names per release (e.g., Parlophone, Factory Records) |
 | `release_track` | Tracks on releases with position and duration |
 | `release_track_artist` | Artists on specific tracks (for compilations) |
 | `cache_metadata` | Data freshness tracking (cached_at, source) |
