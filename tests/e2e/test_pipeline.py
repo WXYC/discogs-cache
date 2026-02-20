@@ -232,6 +232,100 @@ class TestPipeline:
         assert count == 0
 
 
+FIXTURE_LIBRARY_LABELS = CSV_DIR / "library_labels.csv"
+
+
+class TestPipelineWithLabels:
+    """Run pipeline with --library-labels for label-aware dedup.
+
+    Omits --library-db so the prune step is skipped; this test is focused
+    on verifying that label matching changes the dedup winner.
+    """
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _run_pipeline(self, e2e_db_url):
+        """Run run_pipeline.py with --library-labels (no prune)."""
+        self.__class__._db_url = e2e_db_url
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(RUN_PIPELINE),
+                "--csv-dir",
+                str(CSV_DIR),
+                "--library-labels",
+                str(FIXTURE_LIBRARY_LABELS),
+                "--database-url",
+                e2e_db_url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        self.__class__._stdout = result.stdout
+        self.__class__._stderr = result.stderr
+        self.__class__._returncode = result.returncode
+
+        if result.returncode != 0:
+            print("STDOUT:", result.stdout)
+            print("STDERR:", result.stderr)
+
+        assert result.returncode == 0, (
+            f"Pipeline failed (exit {result.returncode}):\n{result.stderr}"
+        )
+
+    @pytest.fixture(autouse=True)
+    def _store_url(self):
+        self.db_url = self.__class__._db_url
+
+    def _connect(self):
+        return psycopg.connect(self.db_url)
+
+    def test_label_match_overrides_track_count_master_500(self) -> None:
+        """Label-aware dedup keeps release 1001 (Parlophone) over 1002 (Capitol, more tracks)."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
+            ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert ids == [1001], f"Expected only 1001 after label-aware dedup, got {ids}"
+
+    def test_label_match_overrides_track_count_master_600(self) -> None:
+        """Label-aware dedup keeps release 2001 (Factory) over 2002 (Qwest, more tracks)."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id")
+            ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert ids == [2001], f"Expected only 2001 after label-aware dedup, got {ids}"
+
+    def test_temp_tables_cleaned_up(self) -> None:
+        """wxyc_label_pref and release_label_match are dropped after dedup."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_name IN ('wxyc_label_pref', 'release_label_match')
+            """)
+            tables = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert tables == [], f"Temp tables should be cleaned up, found {tables}"
+
+    def test_non_label_matched_uses_track_count(self) -> None:
+        """Releases without label match still use track count ranking.
+
+        Release 3001 (unique master_id 700) and 4001 (no master_id) should
+        be unaffected by label matching and survive both dedup and prune.
+        """
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release WHERE id IN (3001, 4001)")
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 2
+
+
 class TestPipelineWithoutLibrary:
     """Run pipeline without library.db (skips prune step)."""
 

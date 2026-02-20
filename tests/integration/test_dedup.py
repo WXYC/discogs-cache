@@ -35,6 +35,8 @@ copy_table = _dd.copy_table
 swap_tables = _dd.swap_tables
 add_base_constraints_and_indexes = _dd.add_base_constraints_and_indexes
 add_constraints_and_indexes = _dd.add_constraints_and_indexes
+load_library_labels = _dd.load_library_labels
+create_label_match_table = _dd.create_label_match_table
 
 pytestmark = pytest.mark.postgres
 
@@ -408,6 +410,135 @@ class TestDedupNoop:
             cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
         conn.close()
         assert count == 0
+
+
+def _run_dedup_with_labels(db_url: str, library_labels_csv: Path) -> None:
+    """Run the dedup pipeline with label-matching enabled."""
+    conn = psycopg.connect(db_url, autocommit=True)
+    load_library_labels(conn, library_labels_csv)
+    create_label_match_table(conn)
+    delete_count = ensure_dedup_ids(conn)
+    if delete_count > 0:
+        tables = [
+            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
+            (
+                "release_artist",
+                "new_release_artist",
+                "release_id, artist_name, extra",
+                "release_id",
+            ),
+            (
+                "release_label",
+                "new_release_label",
+                "release_id, label_name",
+                "release_id",
+            ),
+            (
+                "cache_metadata",
+                "new_cache_metadata",
+                "release_id, cached_at, source, last_validated",
+                "release_id",
+            ),
+        ]
+
+        for old, new, cols, id_col in tables:
+            copy_table(conn, old, new, cols, id_col)
+
+        with conn.cursor() as cur:
+            for stmt in [
+                "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS fk_release_artist_release",
+                "ALTER TABLE release_label DROP CONSTRAINT IF EXISTS fk_release_label_release",
+                "ALTER TABLE cache_metadata DROP CONSTRAINT IF EXISTS fk_cache_metadata_release",
+            ]:
+                cur.execute(stmt)
+
+        for old, new, _, _ in tables:
+            swap_tables(conn, old, new)
+        add_base_constraints_and_indexes(conn)
+
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+            cur.execute("DROP TABLE IF EXISTS release_track_count")
+            cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+            cur.execute("DROP TABLE IF EXISTS release_label_match")
+    conn.close()
+
+
+class TestDedupWithLabels:
+    """Dedup ranking prefers releases matching WXYC label preferences."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _set_up_and_dedup(self, db_url):
+        """Import base fixtures, run label-aware dedup, then import tracks."""
+        self.__class__._db_url = db_url
+        _fresh_import(db_url)
+        library_labels_csv = CSV_DIR / "library_labels.csv"
+        _run_dedup_with_labels(db_url, library_labels_csv)
+        _import_tracks_after_dedup(db_url)
+
+    @pytest.fixture(autouse=True)
+    def _store_url(self):
+        self.db_url = self.__class__._db_url
+
+    def _connect(self):
+        return psycopg.connect(self.db_url)
+
+    def test_label_match_overrides_track_count_master_500(self) -> None:
+        """Release 1001 (Parlophone, 3 tracks) wins over 1002 (Capitol, 5 tracks)."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
+            ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert ids == [1001]
+
+    def test_label_match_overrides_track_count_master_600(self) -> None:
+        """Release 2001 (Factory, 2 tracks) wins over 2002 (Qwest, 4 tracks)."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id")
+            ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert ids == [2001]
+
+    def test_unmatched_releases_use_track_count(self) -> None:
+        """Releases with unique master_ids are not affected by label matching."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release WHERE id IN (5001, 5002)")
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 2
+
+    def test_unique_and_null_master_id_untouched(self) -> None:
+        """Releases with unique or NULL master_id survive label-aware dedup."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release WHERE id IN (3001, 4001)")
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 2
+
+    def test_label_match_temp_tables_cleaned_up(self) -> None:
+        """Temp tables wxyc_label_pref and release_label_match are dropped."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_name IN ('wxyc_label_pref', 'release_label_match')"
+            )
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 0
+
+    def test_total_release_count_after_dedup(self) -> None:
+        """Same total: 15 imported - 3 duplicates = 12 (just different winners)."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release")
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 12
 
 
 class TestDedupFallback:

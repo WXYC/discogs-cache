@@ -240,6 +240,29 @@ def create_release_image_csv() -> None:
     write_csv("release_image.csv", headers, rows)
 
 
+def create_library_labels_csv() -> None:
+    """Create library_labels.csv with WXYC label preferences.
+
+    These represent labels WXYC actually owns for specific albums,
+    used to influence dedup ranking via --library-labels.
+
+    The existing release_label.csv has Discogs label data per release:
+      - 1001: Parlophone, Capitol Records; 1002: Capitol Records; 1003: EMI
+      - 2001: Factory Records; 2002: Qwest Records
+
+    This fixture says WXYC owns the Parlophone pressing of OK Computer
+    and the Factory Records pressing of Unknown Pleasures, which causes
+    label-aware dedup to prefer 1001 over 1002 and 2001 over 2002
+    (overriding the default track-count ranking).
+    """
+    headers = ["artist_name", "release_title", "label_name"]
+    rows = [
+        ["Joy Division", "Unknown Pleasures", "Factory Records"],
+        ["Radiohead", "OK Computer", "Parlophone"],
+    ]
+    write_csv("library_labels.csv", headers, rows)
+
+
 def create_library_db() -> None:
     """Create a SQLite library.db with (artist, title) pairs.
 
@@ -331,6 +354,7 @@ def main() -> None:
     create_release_track_artist_csv()
     create_release_label_csv()
     create_release_image_csv()
+    create_library_labels_csv()
     print()
     print("Library data:")
     create_library_db()

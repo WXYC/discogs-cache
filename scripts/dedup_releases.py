@@ -8,15 +8,22 @@ delete ratios.
 Expects dedup_delete_ids table to already exist (from a previous run).
 If not, creates it from the ROW_NUMBER query.
 
+When --library-labels is provided, WXYC label preferences influence the
+ranking: releases whose label matches WXYC's known pressing are preferred
+over releases with more tracks but a different label.
+
 Usage:
-    python dedup_releases.py [database_url]
+    python dedup_releases.py [database_url] [--library-labels <csv>]
 
     database_url defaults to postgresql:///discogs
 """
 
+import argparse
+import csv
 import logging
 import sys
 import time
+from pathlib import Path
 
 import psycopg
 
@@ -37,6 +44,99 @@ def _track_count_table_exists(conn) -> bool:
             )
         """)
         return cur.fetchone()[0]
+
+
+def _label_match_table_exists(conn) -> bool:
+    """Return True if the release_label_match table exists."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'release_label_match'
+            )
+        """)
+        return cur.fetchone()[0]
+
+
+def load_library_labels(conn, csv_path: Path) -> int:
+    """Load WXYC label preferences from CSV into an UNLOGGED table.
+
+    Creates the ``wxyc_label_pref`` table with columns
+    (artist_name, release_title, label_name) and bulk-loads the CSV.
+
+    Args:
+        conn: psycopg connection (autocommit=True).
+        csv_path: Path to library_labels.csv.
+
+    Returns:
+        Number of rows loaded.
+    """
+    logger.info("Loading WXYC label preferences from %s", csv_path)
+
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+        cur.execute("""
+            CREATE UNLOGGED TABLE wxyc_label_pref (
+                artist_name text NOT NULL,
+                release_title text NOT NULL,
+                label_name text NOT NULL
+            )
+        """)
+
+    rows = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append((row["artist_name"], row["release_title"], row["label_name"]))
+
+    if rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO wxyc_label_pref (artist_name, release_title, label_name) "
+                "VALUES (%s, %s, %s)",
+                rows,
+            )
+
+    logger.info("Loaded %d label preferences", len(rows))
+    return len(rows)
+
+
+def create_label_match_table(conn) -> int:
+    """Create release_label_match table by joining Discogs labels to WXYC preferences.
+
+    Marks which release_ids have a label matching WXYC's known pressing
+    for that (artist, title) pair. Uses lowercased exact matching.
+
+    Requires wxyc_label_pref table to exist (from load_library_labels).
+
+    Args:
+        conn: psycopg connection (autocommit=True).
+
+    Returns:
+        Number of releases matched.
+    """
+    logger.info("Creating release_label_match table...")
+
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS release_label_match")
+        cur.execute("""
+            CREATE UNLOGGED TABLE release_label_match AS
+            SELECT DISTINCT rl.release_id, 1 AS label_match
+            FROM release_label rl
+            JOIN release r ON r.id = rl.release_id
+            JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
+            JOIN wxyc_label_pref wlp
+              ON lower(ra.artist_name) = lower(wlp.artist_name)
+              AND lower(r.title) = lower(wlp.release_title)
+              AND lower(rl.label_name) = lower(wlp.label_name)
+            WHERE r.master_id IS NOT NULL
+        """)
+        cur.execute("ALTER TABLE release_label_match ADD PRIMARY KEY (release_id)")
+        cur.execute("SELECT count(*) FROM release_label_match")
+        count = int(cur.fetchone()[0])
+
+    logger.info("Matched %d releases to WXYC label preferences", count)
+    return count
 
 
 def ensure_dedup_ids(conn) -> int:
@@ -83,19 +183,33 @@ def ensure_dedup_ids(conn) -> int:
             ") tc ON tc.release_id = r.id"
         )
 
+    # Optional label matching: prefer releases whose label matches WXYC's pressing
+    use_label_match = _label_match_table_exists(conn)
+    if use_label_match:
+        label_join = "LEFT JOIN release_label_match rlm ON rlm.release_id = r.id"
+        order_by = (
+            "COALESCE(rlm.label_match, 0) DESC, "
+            "(r.country = 'US')::int DESC, "
+            "tc.track_count DESC, r.id ASC"
+        )
+        logger.info("  Label matching enabled (release_label_match table found)")
+    else:
+        label_join = ""
+        order_by = "(r.country = 'US')::int DESC, tc.track_count DESC, r.id ASC"
+
     with conn.cursor() as cur:
-        # track_count_join is built from trusted internal constants, not user input
+        # All SQL fragments are built from trusted internal constants, not user input
         cur.execute(f"""
             CREATE UNLOGGED TABLE dedup_delete_ids AS
             SELECT id AS release_id FROM (
                 SELECT r.id, r.master_id,
                        ROW_NUMBER() OVER (
                            PARTITION BY r.master_id
-                           ORDER BY (r.country = 'US')::int DESC,
-                                    tc.track_count DESC, r.id ASC
+                           ORDER BY {order_by}
                        ) as rn
                 FROM release r
                 {track_count_join}
+                {label_join}
                 WHERE r.master_id IS NOT NULL
             ) ranked
             WHERE rn > 1
@@ -245,19 +359,53 @@ def add_constraints_and_indexes(conn) -> None:
     add_track_constraints_and_indexes(conn)
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "database_url",
+        nargs="?",
+        default="postgresql:///discogs",
+        help="PostgreSQL connection URL (default: postgresql:///discogs).",
+    )
+    parser.add_argument(
+        "--library-labels",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Path to library_labels.csv with WXYC label preferences. "
+        "When provided, dedup ranking prefers releases whose label "
+        "matches WXYC's known pressing.",
+    )
+    return parser.parse_args(argv)
+
+
 def main():
-    db_url = sys.argv[1] if len(sys.argv) > 1 else "postgresql:///discogs"
+    args = parse_args()
+    db_url = args.database_url
 
     logger.info(f"Connecting to {db_url}")
     conn = psycopg.connect(db_url, autocommit=True)
+
+    # Step 0 (optional): Load WXYC label preferences for label-aware ranking
+    if args.library_labels:
+        if not args.library_labels.exists():
+            logger.error("Library labels file not found: %s", args.library_labels)
+            sys.exit(1)
+        load_library_labels(conn, args.library_labels)
+        create_label_match_table(conn)
 
     # Step 1: Ensure dedup IDs exist
     delete_count = ensure_dedup_ids(conn)
     if delete_count == 0:
         logger.info("No duplicates found, nothing to do")
-        # Clean up release_track_count if it exists
         with conn.cursor() as cur:
             cur.execute("DROP TABLE IF EXISTS release_track_count")
+            cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+            cur.execute("DROP TABLE IF EXISTS release_label_match")
         conn.close()
         return
 
@@ -303,6 +451,8 @@ def main():
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
         cur.execute("DROP TABLE IF EXISTS release_track_count")
+        cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+        cur.execute("DROP TABLE IF EXISTS release_label_match")
 
     # Step 7: Report
     with conn.cursor() as cur:
