@@ -136,3 +136,30 @@ class TestArgParsing:
                     "postgresql://localhost/target",
                 ]
             )
+
+    def test_library_labels_parsed(self) -> None:
+        args = run_pipeline.parse_args(
+            [
+                "--csv-dir",
+                "/tmp/csv",
+                "--library-labels",
+                "/tmp/library_labels.csv",
+            ]
+        )
+        assert args.library_labels == Path("/tmp/library_labels.csv")
+
+    def test_library_labels_default_none(self) -> None:
+        args = run_pipeline.parse_args(["--csv-dir", "/tmp/csv"])
+        assert args.library_labels is None
+
+    def test_wxyc_db_url_requires_library_db(self) -> None:
+        """--wxyc-db-url without --library-db should error."""
+        with pytest.raises(SystemExit):
+            run_pipeline.parse_args(
+                [
+                    "--csv-dir",
+                    "/tmp/csv",
+                    "--wxyc-db-url",
+                    "mysql://user:pass@host/db",
+                ]
+            )

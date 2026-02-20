@@ -25,7 +25,6 @@ import logging
 import sqlite3
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,10 +32,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import compilation detection from lib/matching.py
+# Import shared utilities from lib/
 _LIB_DIR = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(_LIB_DIR.parent))
 from lib.matching import is_compilation_artist  # noqa: E402
+from lib.wxyc import connect_mysql  # noqa: E402
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -92,28 +92,6 @@ def extract_base_artists(library_db_path: Path) -> set[str]:
         conn.close()
     logger.info("Extracted %d base artists", len(artists))
     return artists
-
-
-def connect_mysql(db_url: str):
-    """Connect to MySQL using a URL string.
-
-    Args:
-        db_url: MySQL connection URL (mysql://user:pass@host:port/dbname).
-
-    Returns:
-        A pymysql connection object.
-    """
-    import pymysql
-
-    parsed = urlparse(db_url)
-    return pymysql.connect(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 3306,
-        user=parsed.username or "root",
-        password=parsed.password or "",
-        database=parsed.path.lstrip("/"),
-        charset="utf8",
-    )
 
 
 def extract_alternate_names(conn) -> set[str]:

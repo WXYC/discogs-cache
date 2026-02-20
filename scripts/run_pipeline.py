@@ -100,7 +100,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="URL",
         help="MySQL connection URL for WXYC catalog database "
         "(e.g. mysql://user:pass@host:port/dbname). "
-        "Enriches library_artists.txt with alternate names and cross-references. "
+        "Enriches library_artists.txt with alternate names and cross-references, "
+        "and extracts label preferences for label-aware dedup. "
         "Requires --library-db.",
     )
     parser.add_argument(
@@ -117,6 +118,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="URL",
         help="Copy matched releases to a separate target database instead of "
         "pruning in place. Requires --library-db.",
+    )
+    parser.add_argument(
+        "--library-labels",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Path to pre-generated library_labels.csv for label-aware dedup. "
+        "If omitted but --wxyc-db-url is provided, labels are extracted "
+        "automatically before dedup.",
     )
     parser.add_argument(
         "--resume",
@@ -393,6 +403,10 @@ def main() -> None:
         logger.error("library.db not found: %s", args.library_db)
         sys.exit(1)
 
+    if args.library_labels and not args.library_labels.exists():
+        logger.error("library_labels.csv not found: %s", args.library_labels)
+        sys.exit(1)
+
     # Steps 1-3: XML conversion, newline fix, filtering (only in --xml mode)
     if args.xml is not None:
         with tempfile.TemporaryDirectory(prefix="discogs_pipeline_") as tmpdir:
@@ -419,7 +433,14 @@ def main() -> None:
             filter_to_library_artists(library_artists_path, cleaned_csv_dir, filtered_csv_dir)
 
             # -- database build (create_schema through vacuum)
-            _run_database_build(db_url, filtered_csv_dir, args.library_db, python)
+            _run_database_build(
+                db_url,
+                filtered_csv_dir,
+                args.library_db,
+                python,
+                library_labels=args.library_labels,
+                wxyc_db_url=args.wxyc_db_url,
+            )
     else:
         # Database build only (--csv-dir mode)
         state = _load_or_create_state(args)
@@ -429,6 +450,8 @@ def main() -> None:
             args.library_db,
             python,
             target_db_url=args.target_db_url,
+            library_labels=args.library_labels,
+            wxyc_db_url=args.wxyc_db_url,
             state=state,
             state_file=args.state_file,
         )
@@ -444,6 +467,8 @@ def _run_database_build(
     python: str,
     *,
     target_db_url: str | None = None,
+    library_labels: Path | None = None,
+    wxyc_db_url: str | None = None,
     state: PipelineState | None = None,
     state_file: Path | None = None,
 ) -> None:
@@ -454,6 +479,10 @@ def _run_database_build(
 
     When *target_db_url* is provided, matched releases are copied to the
     target database instead of pruning the source in place.
+
+    When *library_labels* is provided, the CSV is passed to the dedup step
+    for label-aware ranking.  When *wxyc_db_url* is provided but
+    *library_labels* is not, labels are extracted automatically before dedup.
     """
 
     def _save_state() -> None:
@@ -497,10 +526,28 @@ def _run_database_build(
     if state and state.is_completed("dedup"):
         logger.info("Skipping dedup (already completed)")
     else:
-        run_step(
-            "Deduplicate releases",
-            [python, str(SCRIPT_DIR / "dedup_releases.py"), db_url],
-        )
+        # Resolve library labels CSV for label-aware dedup
+        labels_csv = library_labels
+        if labels_csv is None and wxyc_db_url is not None:
+            labels_csv = Path(tempfile.mkdtemp(prefix="discogs_labels_")) / "library_labels.csv"
+            run_step(
+                "Extract WXYC library labels",
+                [
+                    python,
+                    str(SCRIPT_DIR / "extract_library_labels.py"),
+                    "--wxyc-db-url",
+                    wxyc_db_url,
+                    "--output",
+                    str(labels_csv),
+                ],
+            )
+
+        dedup_cmd = [python, str(SCRIPT_DIR / "dedup_releases.py")]
+        if labels_csv is not None:
+            dedup_cmd.extend(["--library-labels", str(labels_csv)])
+        dedup_cmd.append(db_url)
+
+        run_step("Deduplicate releases", dedup_cmd)
         if state:
             state.mark_completed("dedup")
             _save_state()
