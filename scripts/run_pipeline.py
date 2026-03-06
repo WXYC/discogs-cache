@@ -78,8 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         default="discogs-xml-converter",
         metavar="PATH",
-        help="Path to discogs-xml-converter binary "
-        "(default: discogs-xml-converter on PATH).",
+        help="Path to discogs-xml-converter binary (default: discogs-xml-converter on PATH).",
     )
     parser.add_argument(
         "--library-artists",
