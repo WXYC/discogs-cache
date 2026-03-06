@@ -94,9 +94,7 @@ class TestArgParsing:
         assert args.state_file == Path(".pipeline_state.json")
 
     def test_converter_default(self) -> None:
-        args = run_pipeline.parse_args(
-            ["--xml", "/tmp/releases.xml.gz"]
-        )
+        args = run_pipeline.parse_args(["--xml", "/tmp/releases.xml.gz"])
         assert args.converter == "discogs-xml-converter"
 
     def test_converter_custom(self) -> None:
