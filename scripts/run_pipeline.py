@@ -6,8 +6,8 @@ Two modes of operation:
   Full pipeline from XML (steps 1-9):
     python scripts/run_pipeline.py \\
       --xml <releases.xml.gz> \\
-      --xml2db <path/to/discogs-xml2db/> \\
       --library-artists <library_artists.txt> \\
+      [--converter <path/to/discogs-xml-converter>] \\
       [--library-db <library.db>] \\
       [--wxyc-db-url <mysql://user:pass@host:port/db>] \\
       [--database-url <url>]
@@ -64,8 +64,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--xml",
         type=Path,
         metavar="FILE",
-        help="Path to Discogs releases XML dump (e.g. releases.xml.gz). "
-        "Requires --xml2db and --library-artists.",
+        help="Path to Discogs releases XML dump (e.g. releases.xml.gz).",
     )
     source.add_argument(
         "--csv-dir",
@@ -75,16 +74,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--xml2db",
-        type=Path,
-        metavar="DIR",
-        help="Path to cloned discogs-xml2db repository. Required with --xml.",
+        "--converter",
+        type=str,
+        default="discogs-xml-converter",
+        metavar="PATH",
+        help="Path to discogs-xml-converter binary "
+        "(default: discogs-xml-converter on PATH).",
     )
     parser.add_argument(
         "--library-artists",
         type=Path,
         metavar="FILE",
-        help="Path to library_artists.txt. Required with --xml.",
+        help="Path to library_artists.txt for artist filtering. "
+        "Used with --xml to filter during conversion.",
     )
     parser.add_argument(
         "--library-db",
@@ -148,10 +150,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     # Validate --xml mode dependencies
     if args.xml is not None:
-        if args.xml2db is None:
-            parser.error("--xml2db is required when using --xml")
-        if args.library_artists is None:
-            parser.error("--library-artists is required when using --xml")
         if args.resume:
             parser.error("--resume is only valid with --csv-dir, not --xml")
 
@@ -281,35 +279,21 @@ def report_sizes(db_url: str) -> None:
     conn.close()
 
 
-def convert_xml_to_csv(xml_file: Path, xml2db_dir: Path, output_dir: Path) -> None:
-    """Step 1: Convert Discogs XML dump to CSV using discogs-xml2db."""
-    run_step(
-        "Convert XML to CSV",
-        [
-            sys.executable,
-            "run.py",
-            "--export",
-            "release",
-            "--output",
-            str(output_dir),
-            str(xml_file.resolve()),
-        ],
-        cwd=str(xml2db_dir),
-    )
+def convert_and_filter(
+    xml_file: Path,
+    output_dir: Path,
+    converter: str,
+    library_artists: Path | None = None,
+) -> None:
+    """Convert Discogs XML to CSV using discogs-xml-converter.
 
-
-def fix_csv_newlines(input_dir: Path, output_dir: Path) -> None:
-    """Step 2: Fix embedded newlines in CSV fields."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "fix_csv_newlines", SCRIPT_DIR / "fix_csv_newlines.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    logger.info("Step: Fix CSV newlines")
-    mod.fix_csv_dir(input_dir, output_dir)
+    Replaces the old three-step process (xml2db + fix_newlines + filter_csv)
+    with a single call to the Rust binary.
+    """
+    cmd = [converter, str(xml_file), "--output-dir", str(output_dir)]
+    if library_artists:
+        cmd.extend(["--library-artists", str(library_artists)])
+    run_step("Convert and filter XML to CSV", cmd)
 
 
 def enrich_library_artists(
@@ -329,20 +313,6 @@ def enrich_library_artists(
     if wxyc_db_url:
         cmd.extend(["--wxyc-db-url", wxyc_db_url])
     run_step("Enrich library artists", cmd)
-
-
-def filter_to_library_artists(library_artists: Path, input_dir: Path, output_dir: Path) -> None:
-    """Step 3: Filter CSVs to only releases by library artists."""
-    run_step(
-        "Filter to library artists",
-        [
-            sys.executable,
-            str(SCRIPT_DIR / "filter_csv.py"),
-            str(library_artists),
-            str(input_dir),
-            str(output_dir),
-        ],
-    )
 
 
 def _load_or_create_state(args: argparse.Namespace) -> PipelineState:
@@ -388,10 +358,7 @@ def main() -> None:
         if not args.xml.exists():
             logger.error("XML file not found: %s", args.xml)
             sys.exit(1)
-        if not args.xml2db.exists():
-            logger.error("discogs-xml2db directory not found: %s", args.xml2db)
-            sys.exit(1)
-        if not args.library_artists.exists():
+        if args.library_artists and not args.library_artists.exists():
             logger.error("library_artists.txt not found: %s", args.library_artists)
             sys.exit(1)
     else:
@@ -407,35 +374,26 @@ def main() -> None:
         logger.error("library_labels.csv not found: %s", args.library_labels)
         sys.exit(1)
 
-    # Steps 1-3: XML conversion, newline fix, filtering (only in --xml mode)
+    # Steps 1-3: XML conversion + filtering (only in --xml mode)
     if args.xml is not None:
         with tempfile.TemporaryDirectory(prefix="discogs_pipeline_") as tmpdir:
             tmp = Path(tmpdir)
-            raw_csv_dir = tmp / "raw"
-            cleaned_csv_dir = tmp / "cleaned"
-            filtered_csv_dir = tmp / "filtered"
-
-            # -- convert_xml: Convert XML to CSV
-            convert_xml_to_csv(args.xml, args.xml2db, raw_csv_dir)
-
-            # -- fix_newlines: Fix CSV newlines
-            fix_csv_newlines(raw_csv_dir, cleaned_csv_dir)
+            csv_dir = tmp / "csv"
 
             # -- enrich_artists: Enrich library_artists.txt (optional)
-            if args.library_db:
+            library_artists_path = args.library_artists
+            if args.library_db and library_artists_path:
                 enriched_artists = tmp / "enriched_library_artists.txt"
                 enrich_library_artists(args.library_db, enriched_artists, args.wxyc_db_url)
                 library_artists_path = enriched_artists
-            else:
-                library_artists_path = args.library_artists
 
-            # -- filter_csv: Filter to library artists
-            filter_to_library_artists(library_artists_path, cleaned_csv_dir, filtered_csv_dir)
+            # -- convert_and_filter: XML to CSV (with optional artist filtering)
+            convert_and_filter(args.xml, csv_dir, args.converter, library_artists_path)
 
             # -- database build (create_schema through vacuum)
             _run_database_build(
                 db_url,
-                filtered_csv_dir,
+                csv_dir,
                 args.library_db,
                 python,
                 library_labels=args.library_labels,

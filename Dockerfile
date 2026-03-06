@@ -1,9 +1,20 @@
+FROM rust:1.77 AS rust-builder
+WORKDIR /build
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/WXYC/discogs-xml-converter.git . && \
+    cargo build --release
+
 FROM python:3.12-slim
 
 # Install postgresql-client for psql (schema creation, VACUUM)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends postgresql-client && \
     rm -rf /var/lib/apt/lists/*
+
+# Copy Rust binary from builder
+COPY --from=rust-builder /build/target/release/discogs-xml-converter /usr/local/bin/
 
 WORKDIR /app
 
