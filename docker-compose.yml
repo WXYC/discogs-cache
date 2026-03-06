@@ -24,11 +24,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-discogs}:${POSTGRES_PASSWORD:-discogs}@db:5432/${POSTGRES_DB:-discogs}
     volumes:
       - ./data:/data:ro
-      - ./discogs-xml2db:/opt/discogs-xml2db:ro
     command: >
       python scripts/run_pipeline.py
       --xml /data/releases.xml.gz
-      --xml2db /opt/discogs-xml2db
       --library-artists /data/library_artists.txt
       --library-db /data/library.db
 

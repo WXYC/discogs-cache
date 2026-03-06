@@ -93,6 +93,18 @@ class TestArgParsing:
         args = run_pipeline.parse_args(["--csv-dir", "/tmp/csv"])
         assert args.state_file == Path(".pipeline_state.json")
 
+    def test_converter_default(self) -> None:
+        args = run_pipeline.parse_args(
+            ["--xml", "/tmp/releases.xml.gz"]
+        )
+        assert args.converter == "discogs-xml-converter"
+
+    def test_converter_custom(self) -> None:
+        args = run_pipeline.parse_args(
+            ["--xml", "/tmp/releases.xml.gz", "--converter", "/usr/local/bin/my-converter"]
+        )
+        assert args.converter == "/usr/local/bin/my-converter"
+
     def test_resume_invalid_with_xml(self) -> None:
         """--resume is only valid with --csv-dir, not --xml."""
         with pytest.raises(SystemExit):
@@ -100,10 +112,6 @@ class TestArgParsing:
                 [
                     "--xml",
                     "/tmp/releases.xml.gz",
-                    "--xml2db",
-                    "/tmp/xml2db",
-                    "--library-artists",
-                    "/tmp/artists.txt",
                     "--resume",
                 ]
             )

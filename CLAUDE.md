@@ -12,22 +12,20 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 ### Pipeline Steps
 
 1. **Download** Discogs monthly data dumps (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
-2. **Convert** XML to CSV using [discogs-xml2db](https://github.com/philipmat/discogs-xml2db) (not a PyPI package; must be cloned separately)
-3. **Fix newlines** in CSV fields (`scripts/fix_csv_newlines.py`)
-4. **Enrich** `library_artists.txt` with WXYC cross-references (`scripts/enrich_library_artists.py`, optional)
-5. **Filter** CSVs to library-matching artists only (`scripts/filter_csv.py`), with diacritics normalization -- ~70% data reduction
-6. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`)
-7. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
-8. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
-9. **Deduplicate** by master_id (`scripts/dedup_releases.py`) -- prefers US releases, then most tracks, then lowest ID
-10. **Prune or Copy-to** -- one of:
+2. **Enrich** `library_artists.txt` with WXYC cross-references (`scripts/enrich_library_artists.py`, optional)
+3. **Convert and filter** XML to CSV using [discogs-xml-converter](https://github.com/WXYC/discogs-xml-converter) (Rust binary), with optional artist filtering via `--library-artists` -- replaces the old three-step process (xml2db + fix_newlines + filter_csv)
+4. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`)
+5. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
+6. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
+7. **Deduplicate** by master_id (`scripts/dedup_releases.py`) -- prefers US releases, then most tracks, then lowest ID
+8. **Prune or Copy-to** -- one of:
     - `--prune`: delete non-matching releases in place (~89% data reduction, 3 GB -> 340 MB)
     - `--copy-to`/`--target-db-url`: copy matched releases to a separate database, preserving the full import
-11. **Vacuum** to reclaim disk space (`VACUUM FULL`)
+9. **Vacuum** to reclaim disk space (`VACUUM FULL`)
 
 `scripts/run_pipeline.py` supports two modes:
-- `--xml` mode: runs steps 2-11 (XML conversion through vacuum)
-- `--csv-dir` mode: runs steps 6-11 (database build from pre-filtered CSVs)
+- `--xml` mode: runs steps 2-9 (enrich, convert+filter, database build through vacuum)
+- `--csv-dir` mode: runs steps 4-9 (database build from pre-filtered CSVs)
 
 Both modes support `--target-db-url` to copy matched releases to a separate database instead of pruning in place, and `--resume` (csv-dir only) to skip already-completed steps.
 
@@ -56,15 +54,15 @@ Consumers connect via `DATABASE_URL_DISCOGS` environment variable.
 - **`pipeline`** service: runs `scripts/run_pipeline.py` against the db
 
 ```bash
-docker compose up --build   # full pipeline (needs data/ and discogs-xml2db/)
+docker compose up --build   # full pipeline (needs data/ directory, builds Rust converter in Docker)
 docker compose up db -d     # just the database (for tests)
 ```
 
 ### Key Files
 
-- `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-11, --csv-dir for steps 6-11)
+- `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-9, --csv-dir for steps 4-9)
 - `scripts/enrich_library_artists.py` -- Enrich artist list with WXYC cross-references (pymysql)
-- `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists (strips diacritics for matching)
+- `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists (standalone, used outside the pipeline)
 - `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
 - `scripts/dedup_releases.py` -- Deduplicate releases by master_id, preferring US releases (copy-swap with `DROP CASCADE`)
 - `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB
@@ -79,7 +77,7 @@ docker compose up db -d     # just the database (for tests)
 
 Two files are inputs to the ETL but produced by request-o-matic:
 
-1. **`library_artists.txt`** -- One artist name per line, used by `filter_csv.py`
+1. **`library_artists.txt`** -- One artist name per line, used by `discogs-xml-converter --library-artists` for filtering
 2. **`library.db`** -- SQLite database, used by `verify_cache.py` for KEEP/PRUNE classification
 
 Both are produced by request-o-matic's library sync (`scripts/sync-library.sh`).
