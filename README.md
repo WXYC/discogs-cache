@@ -215,6 +215,31 @@ If no state file exists when `--resume` is used, the pipeline infers completed s
 
 `--resume` is only valid with `--csv-dir` mode, not `--xml` mode.
 
+### Preserving Converted CSVs (--keep-csv)
+
+In `--xml` mode, converted CSVs are written to a temporary directory that is deleted after the pipeline finishes (or on failure). If the pipeline fails after the 13-minute conversion step, you'd need to re-convert from scratch.
+
+Use `--keep-csv` to write CSVs to a persistent directory instead:
+
+```bash
+python scripts/run_pipeline.py \
+  --xml /path/to/xml_dumps/ \
+  --library-db /path/to/library.db \
+  --keep-csv /path/to/kept_csvs \
+  --database-url postgresql://localhost:5432/discogs
+```
+
+If the pipeline fails, you can restart from the CSVs using `--csv-dir`:
+
+```bash
+python scripts/run_pipeline.py \
+  --csv-dir /path/to/kept_csvs/csv \
+  --library-db /path/to/library.db \
+  --database-url postgresql://localhost:5432/discogs
+```
+
+`--keep-csv` is only meaningful in `--xml` mode.
+
 ### Running Steps Manually
 
 Individual steps can also be run directly:

@@ -27,7 +27,7 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 - `--xml` mode: runs steps 2-9 (enrich, convert+filter, database build through vacuum). `--xml` accepts a single file or a directory.
 - `--csv-dir` mode: runs steps 4-9 (database build from pre-filtered CSVs)
 
-Both modes support `--target-db-url` to copy matched releases to a separate database instead of pruning in place, and `--resume` (csv-dir only) to skip already-completed steps.
+Both modes support `--target-db-url` to copy matched releases to a separate database instead of pruning in place, and `--resume` (csv-dir only) to skip already-completed steps. `--keep-csv` (xml mode only) writes converted CSVs to a persistent directory instead of a temp dir, so they survive pipeline failures.
 
 Step 1 (download) is always manual.
 
@@ -63,9 +63,9 @@ docker compose up db -d     # just the database (for tests)
 - `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-9, --csv-dir for steps 4-9)
 - `scripts/enrich_library_artists.py` -- Enrich artist list with WXYC cross-references (pymysql)
 - `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists (standalone, used outside the pipeline)
-- `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY)
-- `scripts/dedup_releases.py` -- Deduplicate releases by master_id, preferring label match + sublabel resolution, US releases (copy-swap with `DROP CASCADE`)
-- `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB
+- `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY). Child tables are imported in parallel via ThreadPoolExecutor after parent tables.
+- `scripts/dedup_releases.py` -- Deduplicate releases by master_id, preferring label match + sublabel resolution, US releases (copy-swap with `DROP CASCADE`). Index/constraint creation is parallelized via ThreadPoolExecutor.
+- `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB. Fuzzy matching is parallelized via ThreadPoolExecutor (rapidfuzz releases the GIL). Large prune sets (>10K IDs) use copy-and-swap instead of CASCADE DELETE.
 - `scripts/csv_to_tsv.py` -- CSV to TSV conversion utility
 - `scripts/fix_csv_newlines.py` -- Fix multiline CSV fields
 - `lib/matching.py` -- Compilation detection utility
