@@ -361,7 +361,7 @@ def _exec_one(db_url: str, stmt: str) -> None:
         conn.close()
 
 
-def add_base_constraints_and_indexes(conn) -> None:
+def add_base_constraints_and_indexes(conn, db_url: str | None = None) -> None:
     """Add PK, FK constraints and indexes to base tables (no track tables).
 
     Called after dedup copy-swap. Track constraints are added separately
@@ -371,13 +371,19 @@ def add_base_constraints_and_indexes(conn) -> None:
     - Level 1: PK on release (must be first, FK constraints depend on it)
     - Level 2: FK constraints + FK indexes (parallel, all depend on PK only)
     - Level 3: GIN trigram indexes + cache metadata indexes (parallel, independent)
+
+    Args:
+        conn: psycopg connection (used for serial Level 1 PK creation).
+        db_url: PostgreSQL connection URL for parallel workers. If None,
+            falls back to conn.info.dsn (which may omit password).
     """
     logger.info("Adding base constraints and indexes...")
     start = time.time()
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    db_url = conn.info.dsn
+    if db_url is None:
+        db_url = conn.info.dsn
 
     def _exec_parallel(stmts: list[str], label: str) -> None:
         if not stmts:
@@ -431,7 +437,7 @@ def add_base_constraints_and_indexes(conn) -> None:
     logger.info(f"Base constraints and indexes added in {elapsed:.1f}s")
 
 
-def add_track_constraints_and_indexes(conn) -> None:
+def add_track_constraints_and_indexes(conn, db_url: str | None = None) -> None:
     """Add FK constraints and indexes to track tables.
 
     Called after track import (post-dedup). Equivalent to running
@@ -440,13 +446,19 @@ def add_track_constraints_and_indexes(conn) -> None:
     Parallelizes independent statements:
     - Level 1: FK constraints (parallel, both depend on release PK only)
     - Level 2: FK indexes + GIN trigram indexes (parallel, independent)
+
+    Args:
+        conn: psycopg connection (unused but kept for API consistency).
+        db_url: PostgreSQL connection URL for parallel workers. If None,
+            falls back to conn.info.dsn (which may omit password).
     """
     logger.info("Adding track constraints and indexes...")
     start = time.time()
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    db_url = conn.info.dsn
+    if db_url is None:
+        db_url = conn.info.dsn
 
     def _exec_parallel(stmts: list[str], label: str) -> None:
         if not stmts:
@@ -487,14 +499,14 @@ def add_track_constraints_and_indexes(conn) -> None:
     logger.info(f"Track constraints and indexes added in {elapsed:.1f}s")
 
 
-def add_constraints_and_indexes(conn) -> None:
+def add_constraints_and_indexes(conn, db_url: str | None = None) -> None:
     """Add PK, FK constraints and indexes to all tables.
 
     Convenience function that calls both base and track versions.
     Used for backward compatibility (standalone dedup with all tables present).
     """
-    add_base_constraints_and_indexes(conn)
-    add_track_constraints_and_indexes(conn)
+    add_base_constraints_and_indexes(conn, db_url=db_url)
+    add_track_constraints_and_indexes(conn, db_url=db_url)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -604,7 +616,7 @@ def main():
         swap_tables(conn, old, new)
 
     # Step 5: Add base constraints and indexes
-    add_base_constraints_and_indexes(conn)
+    add_base_constraints_and_indexes(conn, db_url=db_url)
 
     # Step 6: Cleanup
     logger.info("Cleaning up...")
