@@ -36,6 +36,7 @@ swap_tables = _dd.swap_tables
 add_base_constraints_and_indexes = _dd.add_base_constraints_and_indexes
 add_constraints_and_indexes = _dd.add_constraints_and_indexes
 load_library_labels = _dd.load_library_labels
+load_label_hierarchy = _dd.load_label_hierarchy
 create_label_match_table = _dd.create_label_match_table
 
 pytestmark = pytest.mark.postgres
@@ -112,7 +113,7 @@ def _run_dedup(db_url: str) -> None:
             (
                 "release_artist",
                 "new_release_artist",
-                "release_id, artist_name, extra",
+                "release_id, artist_id, artist_name, extra",
                 "release_id",
             ),
             (
@@ -424,7 +425,7 @@ def _run_dedup_with_labels(db_url: str, library_labels_csv: Path) -> None:
             (
                 "release_artist",
                 "new_release_artist",
-                "release_id, artist_name, extra",
+                "release_id, artist_id, artist_name, extra",
                 "release_id",
             ),
             (
@@ -587,3 +588,110 @@ class TestDedupFallback:
             cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
         conn.close()
         assert ids == [1]
+
+
+def _run_dedup_with_labels_and_hierarchy(
+    db_url: str, library_labels_csv: Path, label_hierarchy_csv: Path
+) -> None:
+    """Run the dedup pipeline with label-matching and sublabel resolution enabled."""
+    conn = psycopg.connect(db_url, autocommit=True)
+    load_library_labels(conn, library_labels_csv)
+    load_label_hierarchy(conn, label_hierarchy_csv)
+    create_label_match_table(conn)
+    delete_count = ensure_dedup_ids(conn)
+    if delete_count > 0:
+        tables = [
+            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
+            (
+                "release_artist",
+                "new_release_artist",
+                "release_id, artist_id, artist_name, extra",
+                "release_id",
+            ),
+            (
+                "release_label",
+                "new_release_label",
+                "release_id, label_name",
+                "release_id",
+            ),
+            (
+                "cache_metadata",
+                "new_cache_metadata",
+                "release_id, cached_at, source, last_validated",
+                "release_id",
+            ),
+        ]
+
+        for old, new, cols, id_col in tables:
+            copy_table(conn, old, new, cols, id_col)
+
+        with conn.cursor() as cur:
+            for stmt in [
+                "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS fk_release_artist_release",
+                "ALTER TABLE release_label DROP CONSTRAINT IF EXISTS fk_release_label_release",
+                "ALTER TABLE cache_metadata DROP CONSTRAINT IF EXISTS fk_cache_metadata_release",
+            ]:
+                cur.execute(stmt)
+
+        for old, new, _, _ in tables:
+            swap_tables(conn, old, new)
+        add_base_constraints_and_indexes(conn)
+
+        with conn.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+            cur.execute("DROP TABLE IF EXISTS release_track_count")
+            cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+            cur.execute("DROP TABLE IF EXISTS release_label_match")
+            cur.execute("DROP TABLE IF EXISTS label_hierarchy")
+    conn.close()
+
+
+class TestDedupWithLabelHierarchy:
+    """Dedup ranking resolves sublabels via label_hierarchy."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _set_up_and_dedup(self, db_url):
+        """Import base fixtures, run label+hierarchy-aware dedup, then import tracks."""
+        self.__class__._db_url = db_url
+        _fresh_import(db_url)
+        library_labels_csv = CSV_DIR / "library_labels.csv"
+        label_hierarchy_csv = CSV_DIR / "label_hierarchy.csv"
+        _run_dedup_with_labels_and_hierarchy(db_url, library_labels_csv, label_hierarchy_csv)
+        _import_tracks_after_dedup(db_url)
+
+    @pytest.fixture(autouse=True)
+    def _store_url(self):
+        self.db_url = self.__class__._db_url
+
+    def _connect(self):
+        return psycopg.connect(self.db_url)
+
+    def test_sublabel_match_for_master_500(self) -> None:
+        """Release 1001 (Parlophone) wins — library says Parlophone, direct match."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
+            ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+        assert ids == [1001]
+
+    def test_label_hierarchy_temp_table_cleaned_up(self) -> None:
+        """label_hierarchy table is dropped after dedup."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_name = 'label_hierarchy'"
+            )
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 0
+
+    def test_total_release_count_same(self) -> None:
+        """Same total: 15 imported - 3 duplicates = 12."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release")
+            count = cur.fetchone()[0]
+        conn.close()
+        assert count == 12

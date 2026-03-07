@@ -101,13 +101,80 @@ def load_library_labels(conn, csv_path: Path) -> int:
     return len(rows)
 
 
+def load_label_hierarchy(conn, csv_path: Path) -> int:
+    """Load Discogs label hierarchy from CSV into an UNLOGGED table.
+
+    Creates the ``label_hierarchy`` table with columns
+    (label_id, label_name, parent_label_id, parent_label_name) and bulk-loads
+    the CSV.
+
+    Args:
+        conn: psycopg connection (autocommit=True).
+        csv_path: Path to label_hierarchy.csv.
+
+    Returns:
+        Number of rows loaded.
+    """
+    logger.info("Loading label hierarchy from %s", csv_path)
+
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS label_hierarchy")
+        cur.execute("""
+            CREATE UNLOGGED TABLE label_hierarchy (
+                label_id integer NOT NULL,
+                label_name text NOT NULL,
+                parent_label_id integer NOT NULL,
+                parent_label_name text NOT NULL
+            )
+        """)
+
+    rows = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(
+                (
+                    int(row["label_id"]),
+                    row["label_name"],
+                    int(row["parent_label_id"]),
+                    row["parent_label_name"],
+                )
+            )
+
+    if rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO label_hierarchy (label_id, label_name, parent_label_id, "
+                "parent_label_name) VALUES (%s, %s, %s, %s)",
+                rows,
+            )
+
+    logger.info("Loaded %d label hierarchy entries", len(rows))
+    return len(rows)
+
+
+def _label_hierarchy_table_exists(conn) -> bool:
+    """Return True if the label_hierarchy table exists."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'label_hierarchy'
+            )
+        """)
+        return cur.fetchone()[0]
+
+
 def create_label_match_table(conn) -> int:
     """Create release_label_match table by joining Discogs labels to WXYC preferences.
 
     Marks which release_ids have a label matching WXYC's known pressing
-    for that (artist, title) pair. Uses lowercased exact matching.
+    for that (artist, title) pair. Uses lowercased matching with optional
+    sublabel resolution via the label_hierarchy table.
 
     Requires wxyc_label_pref table to exist (from load_library_labels).
+    Optionally uses label_hierarchy table (from load_label_hierarchy) for
+    bidirectional sublabel matching.
 
     Args:
         conn: psycopg connection (autocommit=True).
@@ -117,9 +184,28 @@ def create_label_match_table(conn) -> int:
     """
     logger.info("Creating release_label_match table...")
 
+    use_hierarchy = _label_hierarchy_table_exists(conn)
+    if use_hierarchy:
+        logger.info("  Label hierarchy loaded — enabling sublabel resolution")
+        label_condition = """(
+              lower(rl.label_name) = lower(wlp.label_name)
+              OR EXISTS (
+                  SELECT 1 FROM label_hierarchy lh
+                  WHERE lower(lh.label_name) = lower(rl.label_name)
+                    AND lower(lh.parent_label_name) = lower(wlp.label_name)
+              )
+              OR EXISTS (
+                  SELECT 1 FROM label_hierarchy lh
+                  WHERE lower(lh.parent_label_name) = lower(rl.label_name)
+                    AND lower(lh.label_name) = lower(wlp.label_name)
+              ))"""
+    else:
+        label_condition = "lower(rl.label_name) = lower(wlp.label_name)"
+
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS release_label_match")
-        cur.execute("""
+        # All SQL is built from trusted internal constants, not user input
+        cur.execute(f"""
             CREATE UNLOGGED TABLE release_label_match AS
             SELECT DISTINCT rl.release_id, 1 AS label_match
             FROM release_label rl
@@ -128,7 +214,7 @@ def create_label_match_table(conn) -> int:
             JOIN wxyc_label_pref wlp
               ON lower(ra.artist_name) = lower(wlp.artist_name)
               AND lower(r.title) = lower(wlp.release_title)
-              AND lower(rl.label_name) = lower(wlp.label_name)
+              AND {label_condition}
             WHERE r.master_id IS NOT NULL
         """)
         cur.execute("ALTER TABLE release_label_match ADD PRIMARY KEY (release_id)")
@@ -380,6 +466,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "When provided, dedup ranking prefers releases whose label "
         "matches WXYC's known pressing.",
     )
+    parser.add_argument(
+        "--label-hierarchy",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Path to label_hierarchy.csv from discogs-xml-converter. "
+        "Enables sublabel resolution during label matching "
+        "(e.g., Parlophone matches EMI).",
+    )
     return parser.parse_args(argv)
 
 
@@ -396,6 +491,14 @@ def main():
             logger.error("Library labels file not found: %s", args.library_labels)
             sys.exit(1)
         load_library_labels(conn, args.library_labels)
+
+        # Load label hierarchy for sublabel resolution (optional)
+        if args.label_hierarchy:
+            if not args.label_hierarchy.exists():
+                logger.error("Label hierarchy file not found: %s", args.label_hierarchy)
+                sys.exit(1)
+            load_label_hierarchy(conn, args.label_hierarchy)
+
         create_label_match_table(conn)
 
     # Step 1: Ensure dedup IDs exist
@@ -415,7 +518,12 @@ def main():
     # Only base tables + cache_metadata (tracks are imported after dedup)
     tables = [
         ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
-        ("release_artist", "new_release_artist", "release_id, artist_name, extra", "release_id"),
+        (
+            "release_artist",
+            "new_release_artist",
+            "release_id, artist_id, artist_name, extra",
+            "release_id",
+        ),
         ("release_label", "new_release_label", "release_id, label_name", "release_id"),
         (
             "cache_metadata",
@@ -453,6 +561,7 @@ def main():
         cur.execute("DROP TABLE IF EXISTS release_track_count")
         cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
         cur.execute("DROP TABLE IF EXISTS release_label_match")
+        cur.execute("DROP TABLE IF EXISTS label_hierarchy")
 
     # Step 7: Report
     with conn.cursor() as cur:
