@@ -179,9 +179,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--library-db or --generate-library-db is required when using --wxyc-db-url")
 
     if args.target_db_url and not args.library_db and not args.generate_library_db:
-        parser.error(
-            "--library-db or --generate-library-db is required when using --target-db-url"
-        )
+        parser.error("--library-db or --generate-library-db is required when using --target-db-url")
 
     return args
 
