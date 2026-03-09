@@ -498,6 +498,14 @@ def _run_xml_pipeline(
             run_sql_file(db_url, SCHEMA_DIR / "create_database.sql")
             run_sql_file(db_url, SCHEMA_DIR / "create_functions.sql")
 
+            # Truncate release tables so COPY doesn't hit unique violations
+            # from a previous run. CASCADE removes child rows.
+            logger.info("Truncating release tables...")
+            conn = psycopg.connect(db_url, autocommit=True)
+            with conn.cursor() as cur:
+                cur.execute("TRUNCATE release CASCADE")
+            conn.close()
+
             # Converter streams releases into PG; supplementary CSVs still
             # go to csv_out (artist_alias.csv, label_hierarchy.csv).
             convert_and_filter(
