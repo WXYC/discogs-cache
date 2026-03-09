@@ -47,14 +47,18 @@ def count_tracks_from_csv(csv_path: Path) -> dict[int, int]:
     """Count tracks per release_id from a release_track CSV file.
 
     Returns a dict mapping release_id -> track count.
+    Uses csv.reader with positional indexing instead of csv.DictReader
+    to avoid dict creation overhead on 100M+ row files.
     """
     counts: dict[int, int] = {}
     with open(csv_path, encoding="utf-8", errors="replace") as f:
-        reader = csv.DictReader(f)
+        reader = csv.reader(f)
+        header = next(reader)
+        release_id_idx = header.index("release_id")
         for row in reader:
             try:
-                release_id = int(row["release_id"])
-            except (ValueError, KeyError):
+                release_id = int(row[release_id_idx])
+            except (ValueError, IndexError):
                 continue
             counts[release_id] = counts.get(release_id, 0) + 1
     return counts
