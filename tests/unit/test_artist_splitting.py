@@ -6,7 +6,6 @@ import pytest
 
 from lib.artist_splitting import split_artist_name, split_artist_name_contextual
 
-
 # ---------------------------------------------------------------------------
 # split_artist_name (context-free)
 # ---------------------------------------------------------------------------
