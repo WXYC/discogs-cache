@@ -68,6 +68,7 @@ docker compose up db -d     # just the database (for tests)
 - `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB. Fuzzy matching is parallelized via ThreadPoolExecutor (rapidfuzz releases the GIL). Large prune sets (>10K IDs) use copy-and-swap instead of CASCADE DELETE.
 - `scripts/csv_to_tsv.py` -- CSV to TSV conversion utility
 - `scripts/fix_csv_newlines.py` -- Fix multiline CSV fields
+- `lib/artist_splitting.py` -- Split combined multi-artist library entries into individual components for matching
 - `lib/matching.py` -- Compilation detection utility
 - `lib/pipeline_state.py` -- Pipeline state tracking for resumable runs
 - `lib/db_introspect.py` -- Database introspection for inferring pipeline state on resume

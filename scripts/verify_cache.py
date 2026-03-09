@@ -50,6 +50,7 @@ import psycopg
 from rapidfuzz import fuzz, process
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from lib.artist_splitting import split_artist_name_contextual
 from lib.matching import is_compilation_artist
 
 logging.basicConfig(
@@ -250,6 +251,33 @@ class LibraryIndex:
 
         combined_strings = list(combined_to_original.keys())
         all_artists = sorted(artist_set)
+
+        # Split multi-artist entries and add synthetic component pairs.
+        # Components are added to exact_pairs and artist_to_titles only,
+        # NOT to all_artists or compilation_titles, to avoid polluting
+        # fuzzy scorer inputs that iterate the full artist list.
+        known_normalized = set(artist_set)
+        split_count = 0
+        for raw_artist, raw_title in rows:
+            if not raw_artist or not raw_title or is_compilation_artist(raw_artist):
+                continue
+            components = split_artist_name_contextual(raw_artist, known_normalized)
+            if not components:
+                continue
+            split_count += 1
+            norm_title = normalize_title(raw_title)
+            for component in components:
+                norm_component = normalize_artist(component)
+                pair = (norm_component, norm_title)
+                if pair not in exact_pairs:
+                    exact_pairs.add(pair)
+                    artist_to_titles.setdefault(norm_component, set()).add(norm_title)
+
+        if split_count:
+            logger.info(
+                "Split %d multi-artist entries into component index entries",
+                split_count,
+            )
 
         return cls(
             exact_pairs=exact_pairs,
