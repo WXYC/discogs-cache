@@ -59,19 +59,29 @@ def load_library_artists(path: Path) -> set[str]:
 
 
 def find_matching_release_ids(release_artist_path: Path, library_artists: set[str]) -> set[int]:
-    """Find all release IDs that have at least one matching library artist."""
+    """Find all release IDs that have at least one matching library artist.
+
+    Uses csv.reader with positional indexing instead of csv.DictReader
+    to avoid dict creation overhead on 100M+ row files.
+    """
     logger.info(f"Scanning {release_artist_path} for matching artists...")
     matching_ids = set()
     total_rows = 0
     matched_rows = 0
 
     with open(release_artist_path, encoding="utf-8", errors="replace") as f:
-        reader = csv.DictReader(f)
+        reader = csv.reader(f)
+        header = next(reader)
+        release_id_idx = header.index("release_id")
+        artist_name_idx = header.index("artist_name")
         for row in reader:
             total_rows += 1
-            artist_name = normalize_artist(row.get("artist_name", ""))
+            try:
+                artist_name = normalize_artist(row[artist_name_idx])
+            except IndexError:
+                continue
             if artist_name in library_artists:
-                release_id = int(row["release_id"])
+                release_id = int(row[release_id_idx])
                 matching_ids.add(release_id)
                 matched_rows += 1
 
