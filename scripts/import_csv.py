@@ -234,7 +234,9 @@ def import_csv(
                     if count % 500000 == 0:
                         logger.info(f"  {table}: {count:,} rows...")
 
+            logger.info(f"  {table}: COPY complete, committing...")
     conn.commit()
+    logger.info(f"  {table}: committed")
     parts = [f"Imported {count:,} rows"]
     if skipped > 0:
         parts.append(f"skipped {skipped:,} with null required fields")
@@ -507,7 +509,9 @@ def main():
             db_url, csv_dir, parent_tables=BASE_TABLES[:1], child_tables=BASE_TABLES[1:]
         )
         conn = psycopg.connect(db_url)
+        logger.info("Populating artwork URLs...")
         import_artwork(conn, csv_dir)
+        logger.info("Artwork URLs complete")
         logger.info("Populating cache_metadata...")
         with conn.cursor() as cur:
             cur.execute("""
@@ -517,11 +521,16 @@ def main():
                 ON CONFLICT (release_id) DO NOTHING
             """)
         conn.commit()
+        logger.info("cache_metadata complete")
+        logger.info("Creating track count table...")
         create_track_count_table(conn, csv_dir)
+        logger.info("Track count table complete")
         conn.close()
     else:
         total = _import_tables(conn, csv_dir, TABLES)
+        logger.info("Populating artwork URLs...")
         import_artwork(conn, csv_dir)
+        logger.info("Artwork URLs complete")
         logger.info("Populating cache_metadata...")
         with conn.cursor() as cur:
             cur.execute("""
@@ -531,6 +540,7 @@ def main():
                 ON CONFLICT (release_id) DO NOTHING
             """)
         conn.commit()
+        logger.info("cache_metadata complete")
         conn.close()
 
     logger.info(f"Total: {total:,} rows imported")
