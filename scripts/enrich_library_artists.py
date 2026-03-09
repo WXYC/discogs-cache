@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Import shared utilities from lib/
 _LIB_DIR = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(_LIB_DIR.parent))
+from lib.artist_splitting import split_artist_name_contextual  # noqa: E402
 from lib.matching import is_compilation_artist  # noqa: E402
 from lib.wxyc import connect_mysql  # noqa: E402
 
@@ -170,6 +171,46 @@ def extract_release_cross_ref_artists(conn) -> set[str]:
     return names
 
 
+def _expand_multi_artist_names(all_names: set[str]) -> set[str]:
+    """Expand multi-artist entries into individual components.
+
+    Uses context-free splitting for unambiguous delimiters (comma, slash, plus)
+    and contextual splitting for ampersand (only when a component is already
+    a known standalone artist).
+
+    Returns the expanded set (original names + new components).
+    """
+    import unicodedata
+
+    # Build the normalized known-artists set for contextual splitting
+    def _normalize(name: str) -> str:
+        nfkd = unicodedata.normalize("NFKD", name)
+        return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+
+    known_artists = {_normalize(n) for n in all_names}
+
+    expanded: set[str] = set()
+    split_count = 0
+
+    for name in all_names:
+        components = split_artist_name_contextual(name, known_artists)
+        if components:
+            split_count += 1
+            for c in components:
+                expanded.add(c)
+                # Also add new components to known set so subsequent splits can use them
+                known_artists.add(_normalize(c))
+
+    if split_count:
+        logger.info(
+            "Split %d multi-artist entries into %d new components",
+            split_count,
+            len(expanded - all_names),
+        )
+
+    return expanded
+
+
 def merge_and_write(
     base: set[str],
     alternates: set[str],
@@ -181,6 +222,7 @@ def merge_and_write(
 
     Names are sorted alphabetically for stable diffs. Empty strings and
     compilation artist names are filtered out. Original case is preserved.
+    Multi-artist entries are expanded into individual components.
 
     Args:
         base: Artist names from library.db.
@@ -190,6 +232,11 @@ def merge_and_write(
         output: Path to write the output file.
     """
     all_names = base | alternates | cross_refs | release_cross_refs
+
+    # Expand multi-artist entries before filtering
+    split_components = _expand_multi_artist_names(all_names)
+    all_names = all_names | split_components
+
     filtered = sorted(
         name for name in all_names if name and name.strip() and not is_compilation_artist(name)
     )

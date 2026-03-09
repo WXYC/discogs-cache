@@ -217,6 +217,82 @@ class TestLibraryIndex:
         assert len(idx.combined_strings) == 1
 
 
+class TestLibraryIndexMultiArtistSplitting:
+    """Test that LibraryIndex splits combined artist entries into components."""
+
+    def test_comma_split_adds_component_pairs(self):
+        """Comma-delimited multi-artist entries add component artist pairs."""
+        rows = [("Mike Vainio, Ryoji, Alva Noto", "Live 2002")]
+        idx = LibraryIndex.from_rows(rows)
+        # Components should appear in exact_pairs
+        assert ("mike vainio", "live 2002") in idx.exact_pairs
+        assert ("ryoji", "live 2002") in idx.exact_pairs
+        assert ("alva noto", "live 2002") in idx.exact_pairs
+
+    def test_comma_split_adds_component_to_artist_to_titles(self):
+        rows = [("Mike Vainio, Ryoji, Alva Noto", "Live 2002")]
+        idx = LibraryIndex.from_rows(rows)
+        assert "live 2002" in idx.artist_to_titles.get("alva noto", set())
+        assert "live 2002" in idx.artist_to_titles_list.get("alva noto", [])
+
+    def test_original_combined_entry_preserved(self):
+        """The original combined entry should remain in the index."""
+        rows = [("Mike Vainio, Ryoji, Alva Noto", "Live 2002")]
+        idx = LibraryIndex.from_rows(rows)
+        norm = normalize_artist("Mike Vainio, Ryoji, Alva Noto")
+        assert (norm, "live 2002") in idx.exact_pairs
+
+    def test_components_not_in_all_artists(self):
+        """Synthetic component artists should NOT appear in all_artists."""
+        rows = [("Mike Vainio, Ryoji, Alva Noto", "Live 2002")]
+        idx = LibraryIndex.from_rows(rows)
+        # all_artists should only contain the original normalized combined name
+        assert "alva noto" not in idx.all_artists
+        assert "mike vainio" not in idx.all_artists
+        assert "ryoji" not in idx.all_artists
+
+    def test_components_not_in_compilation_titles(self):
+        """Splitting should not affect compilation_titles."""
+        rows = [
+            ("Various Artists", "Best of 2024"),
+            ("Mike Vainio, Ryoji, Alva Noto", "Live 2002"),
+        ]
+        idx = LibraryIndex.from_rows(rows)
+        assert "best of 2024" in idx.compilation_titles
+        assert len(idx.compilation_titles) == 1
+
+    def test_ampersand_split_with_known_standalone(self):
+        """Ampersand entries split when a component exists as standalone."""
+        rows = [
+            ("Duke Ellington", "Money Jungle"),
+            ("Duke Ellington & John Coltrane", "Duke Ellington & John Coltrane"),
+        ]
+        idx = LibraryIndex.from_rows(rows)
+        # normalize_title doesn't convert & to "and", so title stays as-is
+        norm_title = normalize_title("Duke Ellington & John Coltrane")
+        # "john coltrane" should be added as a component
+        assert ("john coltrane", norm_title) in idx.exact_pairs
+        assert norm_title in idx.artist_to_titles.get("john coltrane", set())
+
+    def test_ampersand_no_split_without_standalone(self):
+        """Ampersand entries don't split when no component is standalone."""
+        rows = [("Simon & Garfunkel", "Bridge Over Troubled Water")]
+        idx = LibraryIndex.from_rows(rows)
+        # Neither "simon" nor "garfunkel" should appear
+        assert "simon" not in idx.artist_to_titles
+        assert "garfunkel" not in idx.artist_to_titles
+
+    def test_all_artists_count_unchanged(self):
+        """all_artists count should not grow from splitting."""
+        rows = [
+            ("Duke Ellington", "Money Jungle"),
+            ("Duke Ellington & John Coltrane", "Duke Ellington & John Coltrane"),
+        ]
+        idx = LibraryIndex.from_rows(rows)
+        # Only 2 original artists: "duke ellington" and "duke ellington and john coltrane"
+        assert len(idx.all_artists) == 2
+
+
 # ---------------------------------------------------------------------------
 # Step 3: Individual Scorers
 # ---------------------------------------------------------------------------

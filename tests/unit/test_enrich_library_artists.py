@@ -208,3 +208,97 @@ class TestParseArgs:
     def test_missing_required_args_exits(self) -> None:
         with pytest.raises(SystemExit):
             parse_args(["--library-db", "library.db"])  # missing --output
+
+
+# ---------------------------------------------------------------------------
+# Multi-artist splitting in merge_and_write
+# ---------------------------------------------------------------------------
+
+
+class TestMultiArtistSplitting:
+    """merge_and_write should expand multi-artist entries into components."""
+
+    def test_comma_split_adds_components(self, tmp_path: Path) -> None:
+        output = tmp_path / "artists.txt"
+        merge_and_write(
+            base={"Mike Vainio, Ryoji, Alva Noto"},
+            alternates=set(),
+            cross_refs=set(),
+            release_cross_refs=set(),
+            output=output,
+        )
+        lines = set(output.read_text().splitlines())
+        # Original + components
+        assert "Mike Vainio, Ryoji, Alva Noto" in lines
+        assert "Mike Vainio" in lines
+        assert "Ryoji" in lines
+        assert "Alva Noto" in lines
+
+    def test_slash_split_adds_components(self, tmp_path: Path) -> None:
+        output = tmp_path / "artists.txt"
+        merge_and_write(
+            base={"J Dilla / Jay Dee"},
+            alternates=set(),
+            cross_refs=set(),
+            release_cross_refs=set(),
+            output=output,
+        )
+        lines = set(output.read_text().splitlines())
+        assert "J Dilla / Jay Dee" in lines
+        assert "J Dilla" in lines
+        assert "Jay Dee" in lines
+
+    def test_ampersand_split_with_known_standalone(self, tmp_path: Path) -> None:
+        output = tmp_path / "artists.txt"
+        merge_and_write(
+            base={"Duke Ellington & John Coltrane", "Duke Ellington"},
+            alternates=set(),
+            cross_refs=set(),
+            release_cross_refs=set(),
+            output=output,
+        )
+        lines = set(output.read_text().splitlines())
+        assert "Duke Ellington & John Coltrane" in lines
+        assert "Duke Ellington" in lines
+        assert "John Coltrane" in lines
+
+    def test_ampersand_no_split_without_standalone(self, tmp_path: Path) -> None:
+        output = tmp_path / "artists.txt"
+        merge_and_write(
+            base={"Simon & Garfunkel"},
+            alternates=set(),
+            cross_refs=set(),
+            release_cross_refs=set(),
+            output=output,
+        )
+        lines = set(output.read_text().splitlines())
+        assert "Simon & Garfunkel" in lines
+        # Neither component should appear
+        assert "Simon" not in lines
+        assert "Garfunkel" not in lines
+
+    def test_no_duplicate_lines(self, tmp_path: Path) -> None:
+        output = tmp_path / "artists.txt"
+        merge_and_write(
+            base={"Duke Ellington & John Coltrane", "Duke Ellington", "John Coltrane"},
+            alternates=set(),
+            cross_refs=set(),
+            release_cross_refs=set(),
+            output=output,
+        )
+        lines = output.read_text().splitlines()
+        assert len(lines) == len(set(lines))
+
+    def test_compilation_components_excluded(self, tmp_path: Path) -> None:
+        """If a split component is a compilation artist, it should be excluded."""
+        output = tmp_path / "artists.txt"
+        merge_and_write(
+            base={"Juana Molina / Various Artists"},
+            alternates=set(),
+            cross_refs=set(),
+            release_cross_refs=set(),
+            output=output,
+        )
+        lines = set(output.read_text().splitlines())
+        assert "Juana Molina" in lines
+        assert "Various Artists" not in lines
