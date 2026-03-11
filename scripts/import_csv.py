@@ -79,16 +79,16 @@ BASE_TABLES: list[TableConfig] = [
         "csv_file": "release.csv",
         "table": "release",
         "csv_columns": ["id", "title", "country", "released", "master_id"],
-        "db_columns": ["id", "title", "country", "release_year", "master_id"],
+        "db_columns": ["id", "title", "country", "released", "master_id"],
         "required": ["id", "title"],
-        "transforms": {"released": extract_year},
+        "transforms": {},
         "unique_key": ["id"],
     },
     {
         "csv_file": "release_artist.csv",
         "table": "release_artist",
-        "csv_columns": ["release_id", "artist_id", "artist_name", "extra"],
-        "db_columns": ["release_id", "artist_id", "artist_name", "extra"],
+        "csv_columns": ["release_id", "artist_id", "artist_name", "extra", "role"],
+        "db_columns": ["release_id", "artist_id", "artist_name", "extra", "role"],
         "required": ["release_id", "artist_name"],
         "transforms": {},
         "unique_key": ["release_id", "artist_name"],
@@ -96,8 +96,8 @@ BASE_TABLES: list[TableConfig] = [
     {
         "csv_file": "release_label.csv",
         "table": "release_label",
-        "csv_columns": ["release_id", "label"],
-        "db_columns": ["release_id", "label_name"],
+        "csv_columns": ["release_id", "label", "catno"],
+        "db_columns": ["release_id", "label_name", "catno"],
         "required": ["release_id", "label"],
         "transforms": {},
         "unique_key": ["release_id", "label"],
@@ -121,6 +121,25 @@ TRACK_TABLES: list[TableConfig] = [
         "required": ["release_id", "track_sequence"],
         "transforms": {},
         "unique_key": ["release_id", "track_sequence", "artist_name"],
+    },
+]
+
+ARTIST_TABLES: list[TableConfig] = [
+    {
+        "csv_file": "artist_alias.csv",
+        "table": "artist_alias",
+        "csv_columns": ["artist_id", "alias_name"],
+        "db_columns": ["artist_id", "alias_name"],
+        "required": ["artist_id", "alias_name"],
+        "transforms": {},
+    },
+    {
+        "csv_file": "artist_member.csv",
+        "table": "artist_member",
+        "csv_columns": ["group_artist_id", "member_artist_id", "member_name"],
+        "db_columns": ["artist_id", "member_id", "member_name"],
+        "required": ["group_artist_id", "member_artist_id", "member_name"],
+        "transforms": {},
     },
 ]
 
@@ -275,6 +294,26 @@ def populate_cache_metadata(conn) -> int:
                 copy.write_row((rid, "bulk_import"))
     conn.commit()
     logger.info(f"  Populated cache_metadata with {count:,} rows")
+    return count
+
+
+def populate_release_year(conn) -> int:
+    """Populate release_year from the released text field.
+
+    Extracts the 4-digit year prefix from the 'released' column and stores it
+    in the 'release_year' smallint column for efficient filtering.
+    """
+    logger.info("Populating release_year from released text...")
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE release SET release_year = CAST(LEFT(released, 4) AS smallint)
+            WHERE released IS NOT NULL
+              AND released ~ '^[0-9]{4}'
+              AND release_year IS NULL
+        """)
+        count = cur.rowcount
+    conn.commit()
+    logger.info(f"  Populated release_year for {count:,} releases")
     return count
 
 
@@ -481,6 +520,33 @@ def _import_tables_parallel(
     return total
 
 
+def import_artist_details(conn, csv_dir: Path) -> int:
+    """Import artist detail tables from CSV.
+
+    Creates stub artist rows from release_artist data, then imports
+    artist_alias and artist_member CSVs.
+
+    Returns total rows imported.
+    """
+    # Create stub artist rows from release_artist (id + name only)
+    logger.info("Creating stub artist rows from release_artist...")
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO artist (id, name)
+            SELECT DISTINCT artist_id, artist_name
+            FROM release_artist
+            WHERE artist_id IS NOT NULL
+            ON CONFLICT (id) DO NOTHING
+        """)
+        count = cur.rowcount
+    conn.commit()
+    logger.info(f"  Created {count:,} stub artist rows")
+
+    total = count
+    total += _import_tables(conn, csv_dir, ARTIST_TABLES)
+    return total
+
+
 def main():
     import argparse
 
@@ -542,21 +608,29 @@ def main():
         logger.info("Populating artwork URLs...")
         import_artwork(conn, csv_dir)
         logger.info("Artwork URLs complete")
+        populate_release_year(conn)
         logger.info("Populating cache_metadata via COPY...")
         populate_cache_metadata(conn)
         logger.info("cache_metadata complete")
         logger.info("Creating track count table...")
         create_track_count_table(conn, csv_dir)
         logger.info("Track count table complete")
+        logger.info("Importing artist details...")
+        import_artist_details(conn, csv_dir)
+        logger.info("Artist details complete")
         conn.close()
     else:
         total = _import_tables(conn, csv_dir, TABLES)
         logger.info("Populating artwork URLs...")
         import_artwork(conn, csv_dir)
         logger.info("Artwork URLs complete")
+        populate_release_year(conn)
         logger.info("Populating cache_metadata via COPY...")
         populate_cache_metadata(conn)
         logger.info("cache_metadata complete")
+        logger.info("Importing artist details...")
+        import_artist_details(conn, csv_dir)
+        logger.info("Artist details complete")
         conn.close()
 
     logger.info(f"Total: {total:,} rows imported")
