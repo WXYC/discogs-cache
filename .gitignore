@@ -18,3 +18,4 @@ artist_mappings.json
 !tests/fixtures/**/*.db
 !tests/fixtures/**/*.csv
 worklog/
+.DS_Store
