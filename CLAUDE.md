@@ -17,7 +17,7 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 4. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`), then **SET UNLOGGED** on all tables to skip WAL writes during bulk import
 5. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
 6. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
-7. **Deduplicate** by master_id (`scripts/dedup_releases.py`) -- prefers label match (with sublabel resolution via `--label-hierarchy`), then US releases, then most tracks, then lowest ID
+7. **Deduplicate** by (master_id, format) (`scripts/dedup_releases.py`) -- partitions by master_id and normalized format so different formats (CD, Vinyl, etc.) of the same album survive dedup independently. Within each partition, prefers label match (with sublabel resolution via `--label-hierarchy`), then US releases, then most tracks, then lowest ID
 8. **Prune or Copy-to** -- one of:
     - `--prune`: delete non-matching releases in place (~89% data reduction, 3 GB -> 340 MB)
     - `--copy-to`/`--target-db-url`: copy matched releases to a separate database, preserving the full import
@@ -37,6 +37,10 @@ Step 1 (download) is always manual.
 The `release` table includes a `master_id` column used during import and dedup. The dedup copy-swap strategy (`CREATE TABLE AS SELECT ...` without `master_id`) drops the column automatically. After dedup, `master_id` no longer exists in the schema.
 
 The `country` column, by contrast, is permanent -- it is included in the dedup copy-swap SELECT list and persists in the final schema for consumers.
+
+### format Column Lifecycle
+
+The `format` column stores the normalized format category (Vinyl, CD, Cassette, 7", Digital). Unlike `master_id`, `format` persists after dedup and is available to consumers. During import, raw Discogs format strings are normalized via `lib/format_normalization.py` (e.g., "2xLP" → "Vinyl", "CD-R" → "CD"). During dedup, releases are partitioned by `(master_id, format)`, so a CD and Vinyl pressing of the same album both survive. During verify/prune, format-aware matching ensures only releases whose format matches the library's are kept (for exact artist+title matches). NULL format on either side is treated as "match anything" for backward compatibility.
 
 ### Database Schema (Shared Contract)
 
@@ -69,6 +73,7 @@ docker compose up db -d     # just the database (for tests)
 - `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB. Fuzzy matching is parallelized via ThreadPoolExecutor (rapidfuzz releases the GIL). Large prune sets (>10K IDs) use copy-and-swap instead of CASCADE DELETE.
 - `scripts/csv_to_tsv.py` -- CSV to TSV conversion utility
 - `scripts/fix_csv_newlines.py` -- Fix multiline CSV fields
+- `lib/format_normalization.py` -- Normalize raw Discogs/library format strings to broad categories (Vinyl, CD, Cassette, 7", Digital)
 - `lib/artist_splitting.py` -- Split combined multi-artist library entries into individual components for matching
 - `lib/matching.py` -- Compilation detection utility
 - `lib/pipeline_state.py` -- Pipeline state tracking for resumable runs
@@ -185,4 +190,4 @@ When writing inline test data or new fixture rows, use these defaults matching t
 
 **`library_artists.txt`**: `Juana Molina`, `Stereolab`, `Cat Power`, `Jessica Pratt`, `Chuquimamani-Condori`, `Duke Ellington`
 
-**SQLite `library` rows** (artist, title): `("Juana Molina", "DOGA")`, `("Stereolab", "Aluminum Tunes")`, `("Cat Power", "Moon Pix")`, `("Jessica Pratt", "On Your Own Love Again")`, `("Chuquimamani-Condori", "Edits")`, `("Duke Ellington", "Duke Ellington & John Coltrane")`
+**SQLite `library` rows** (artist, title, format): `("Juana Molina", "DOGA", "LP")`, `("Stereolab", "Aluminum Tunes", "CD")`, `("Cat Power", "Moon Pix", "LP")`, `("Jessica Pratt", "On Your Own Love Again", "LP")`, `("Chuquimamani-Condori", "Edits", "CD")`, `("Duke Ellington", "Duke Ellington & John Coltrane", "LP")`

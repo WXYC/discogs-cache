@@ -87,34 +87,43 @@ def create_release_csv() -> None:
 
 def create_release_artist_csv() -> None:
     """Create release_artist.csv linking releases to artists."""
-    headers = ["release_id", "artist_id", "artist_name", "extra", "anv", "position", "join_field"]
+    headers = [
+        "release_id",
+        "artist_id",
+        "artist_name",
+        "extra",
+        "anv",
+        "position",
+        "join_field",
+        "role",
+    ]
     rows = [
         # Radiohead releases (match library)
-        [1001, 1, "Radiohead", 0, "", 1, ""],
-        [1002, 1, "Radiohead", 0, "", 1, ""],
-        [1003, 1, "Radiohead", 0, "", 1, ""],
-        [3001, 1, "Radiohead", 0, "", 1, ""],
-        [4001, 1, "Radiohead", 0, "", 1, ""],
+        [1001, 1, "Radiohead", 0, "", 1, "", ""],
+        [1002, 1, "Radiohead", 0, "", 1, "", ""],
+        [1003, 1, "Radiohead", 0, "", 1, "", ""],
+        [3001, 1, "Radiohead", 0, "", 1, "", ""],
+        [4001, 1, "Radiohead", 0, "", 1, "", ""],
         # Joy Division releases (match library)
-        [2001, 2, "Joy Division", 0, "", 1, ""],
-        [2002, 2, "Joy Division", 0, "", 1, ""],
+        [2001, 2, "Joy Division", 0, "", 1, "", ""],
+        [2002, 2, "Joy Division", 0, "", 1, "", ""],
         # Unknown artists (won't match library)
-        [5001, 3, "DJ Unknown", 0, "", 1, ""],
-        [5002, 4, "Mystery Band", 0, "", 1, ""],
+        [5001, 3, "DJ Unknown", 0, "", 1, "", ""],
+        [5002, 4, "Mystery Band", 0, "", 1, "", ""],
         # Bjork (match library, tests accent handling)
-        [6001, 5, "Björk", 0, "", 1, ""],
+        [6001, 5, "Björk", 0, "", 1, "", ""],
         # Note: release 7001 has empty title and is skipped during import,
         # so no child table rows should reference it.
         # Compilation
-        [8001, 7, "Various", 0, "", 1, ""],
+        [8001, 7, "Various", 0, "", 1, "", ""],
         # Beatles and Simon & Garfunkel (match library)
-        [9001, 8, "Beatles, The", 0, "", 1, ""],
-        [9002, 9, "Simon & Garfunkel", 0, "", 1, ""],
+        [9001, 8, "Beatles, The", 0, "", 1, "", ""],
+        [9002, 9, "Simon & Garfunkel", 0, "", 1, "", ""],
         # Not in library
-        [10001, 10, "Random Artist X", 0, "", 1, ""],
-        [10002, 11, "Obscure Band Y", 0, "", 1, ""],
+        [10001, 10, "Random Artist X", 0, "", 1, "", ""],
+        [10002, 11, "Obscure Band Y", 0, "", 1, "", ""],
         # Extra artist credit (should not be primary)
-        [1001, 12, "Some Producer", 1, "", 2, ""],
+        [1001, 12, "Some Producer", 1, "", 2, "", ""],
     ]
     write_csv("release_artist.csv", headers, rows)
 
@@ -287,49 +296,54 @@ def create_label_hierarchy_csv() -> None:
 
 
 def create_library_db() -> None:
-    """Create a SQLite library.db with (artist, title) pairs.
+    """Create a SQLite library.db with (artist, title, format) tuples.
 
-    These pairs determine KEEP/PRUNE outcomes in verify_cache.py.
+    These entries determine KEEP/PRUNE outcomes in verify_cache.py.
+    Some albums have multiple entries with different formats to test
+    format-aware verify/prune.
     """
     db_path = FIXTURE_DIR / "library.db"
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
 
+    cur.execute("DROP TABLE IF EXISTS library")
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS library (
+        CREATE TABLE library (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             artist TEXT NOT NULL,
-            title TEXT NOT NULL
+            title TEXT NOT NULL,
+            format TEXT
         )
     """)
 
     # Library entries that should produce KEEP decisions
     entries = [
-        ("Radiohead", "OK Computer"),
-        ("Radiohead", "Kid A"),
-        ("Radiohead", "Amnesiac"),
-        ("Joy Division", "Unknown Pleasures"),
-        ("Joy Division", "Closer"),
-        ("Aphex Twin", "Selected Ambient Works 85-92"),
-        ("Beatles, The", "Abbey Road"),
-        ("Simon & Garfunkel", "Bridge Over Troubled Water"),
-        ("Björk", "Homogenic"),
+        ("Radiohead", "OK Computer", "CD"),
+        ("Radiohead", "OK Computer", "LP"),  # library owns both CD and LP
+        ("Radiohead", "Kid A", "CD"),
+        ("Radiohead", "Amnesiac", "CD"),
+        ("Joy Division", "Unknown Pleasures", "LP"),
+        ("Joy Division", "Closer", None),  # some entries have no format
+        ("Aphex Twin", "Selected Ambient Works 85-92", "CD"),
+        ("Beatles, The", "Abbey Road", "LP"),
+        ("Simon & Garfunkel", "Bridge Over Troubled Water", "LP"),
+        ("Björk", "Homogenic", "CD"),
         # Compilation entry (Various prefix triggers compilation handling)
-        ("Various Artists - Compilations", "Sugar Hill"),
+        ("Various Artists - Compilations", "Sugar Hill", "LP"),
         # Extra entries to make the index realistic
-        ("Talking Heads", "Remain in Light"),
-        ("Sonic Youth", "Daydream Nation"),
-        ("Pixies", "Doolittle"),
-        ("My Bloody Valentine", "Loveless"),
-        ("Neutral Milk Hotel", "In the Aeroplane Over the Sea"),
-        ("Pavement", "Slanted and Enchanted"),
-        ("Guided By Voices", "Bee Thousand"),
-        ("Built to Spill", "Perfect From Now On"),
-        ("Modest Mouse", "The Lonesome Crowded West"),
-        ("Sleater-Kinney", "Dig Me Out"),
+        ("Talking Heads", "Remain in Light", "LP"),
+        ("Sonic Youth", "Daydream Nation", "LP"),
+        ("Pixies", "Doolittle", "CD"),
+        ("My Bloody Valentine", "Loveless", "LP"),
+        ("Neutral Milk Hotel", "In the Aeroplane Over the Sea", "LP"),
+        ("Pavement", "Slanted and Enchanted", "CD"),
+        ("Guided By Voices", "Bee Thousand", "LP"),
+        ("Built to Spill", "Perfect From Now On", "CD"),
+        ("Modest Mouse", "The Lonesome Crowded West", "LP"),
+        ("Sleater-Kinney", "Dig Me Out", "CD"),
     ]
 
-    cur.executemany("INSERT INTO library (artist, title) VALUES (?, ?)", entries)
+    cur.executemany("INSERT INTO library (artist, title, format) VALUES (?, ?, ?)", entries)
     conn.commit()
     conn.close()
     print(f"  library.db: {len(entries)} entries")

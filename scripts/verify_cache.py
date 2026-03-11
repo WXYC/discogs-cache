@@ -51,6 +51,7 @@ from rapidfuzz import fuzz, process
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.artist_splitting import split_artist_name_contextual
+from lib.format_normalization import format_matches, normalize_library_format
 from lib.matching import is_compilation_artist
 
 logging.basicConfig(
@@ -201,6 +202,7 @@ class LibraryIndex:
         combined_to_original: dict[str, tuple[str, str]],
         all_artists: list[str],
         compilation_titles: set[str],
+        format_by_pair: dict[tuple[str, str], set[str | None]] | None = None,
     ):
         self.exact_pairs = exact_pairs
         self.artist_to_titles = artist_to_titles
@@ -211,21 +213,29 @@ class LibraryIndex:
         self.combined_to_original = combined_to_original
         self.all_artists = all_artists
         self.compilation_titles = compilation_titles
+        self.format_by_pair: dict[tuple[str, str], set[str | None]] = format_by_pair or {}
 
     @classmethod
-    def from_rows(cls, rows: list[tuple[str, str]]) -> LibraryIndex:
-        """Build index from (artist, title) row tuples.
+    def from_rows(
+        cls, rows: list[tuple[str, str]] | list[tuple[str, str, str | None]]
+    ) -> LibraryIndex:
+        """Build index from (artist, title) or (artist, title, format) row tuples.
 
         Args:
-            rows: List of (raw_artist, raw_title) tuples from the library.
+            rows: List of (raw_artist, raw_title) or (raw_artist, raw_title, raw_format)
+                tuples from the library.
         """
         exact_pairs: set[tuple[str, str]] = set()
         artist_to_titles: dict[str, set[str]] = {}
         combined_to_original: dict[str, tuple[str, str]] = {}
         artist_set: set[str] = set()
         compilation_titles: set[str] = set()
+        format_by_pair: dict[tuple[str, str], set[str | None]] = {}
+        has_format = len(rows) > 0 and len(rows[0]) >= 3
 
-        for raw_artist, raw_title in rows:
+        for row in rows:
+            raw_artist, raw_title = row[0], row[1]
+            raw_format = row[2] if has_format else None
             if not raw_artist or not raw_title:
                 continue
 
@@ -239,8 +249,13 @@ class LibraryIndex:
             norm_artist = normalize_artist(raw_artist)
             pair = (norm_artist, norm_title)
 
+            # Build format_by_pair before dedup check — same pair may have multiple formats
+            if has_format:
+                norm_format = normalize_library_format(raw_format)
+                format_by_pair.setdefault(pair, set()).add(norm_format)
+
             if pair in exact_pairs:
-                continue  # deduplicate
+                continue  # deduplicate (artist+title already indexed)
 
             exact_pairs.add(pair)
             artist_to_titles.setdefault(norm_artist, set()).add(norm_title)
@@ -258,7 +273,8 @@ class LibraryIndex:
         # fuzzy scorer inputs that iterate the full artist list.
         known_normalized = set(artist_set)
         split_count = 0
-        for raw_artist, raw_title in rows:
+        for row in rows:
+            raw_artist, raw_title = row[0], row[1]
             if not raw_artist or not raw_title or is_compilation_artist(raw_artist):
                 continue
             components = split_artist_name_contextual(raw_artist, known_normalized)
@@ -286,11 +302,14 @@ class LibraryIndex:
             combined_to_original=combined_to_original,
             all_artists=all_artists,
             compilation_titles=compilation_titles,
+            format_by_pair=format_by_pair if has_format else None,
         )
 
     @classmethod
     def from_sqlite(cls, db_path: Path) -> LibraryIndex:
         """Build index from the library SQLite database.
+
+        Loads format column if present (3-tuples); falls back to artist+title only (2-tuples).
 
         Args:
             db_path: Path to library.db
@@ -298,7 +317,10 @@ class LibraryIndex:
         logger.info(f"Building LibraryIndex from {db_path}")
         conn = sqlite3.connect(str(db_path))
         cur = conn.cursor()
-        cur.execute("SELECT artist, title FROM library")
+        try:
+            cur.execute("SELECT artist, title, format FROM library")
+        except sqlite3.OperationalError:
+            cur.execute("SELECT artist, title FROM library")
         rows = cur.fetchall()
         conn.close()
 
@@ -603,21 +625,21 @@ def save_artist_mappings(path: Path, mappings: dict) -> None:
 
 async def load_discogs_releases(
     conn: asyncpg.Connection,
-) -> list[tuple[int, str, str]]:
+) -> list[tuple[int, str, str, str | None]]:
     """Load all releases with their primary artist from the Discogs cache.
 
-    Returns list of (release_id, artist_name, title) tuples.
+    Returns list of (release_id, artist_name, title, format) tuples.
     Only includes main artists (extra = 0).
     """
     logger.info("Loading Discogs releases...")
     rows = await conn.fetch("""
-        SELECT r.id, ra.artist_name, r.title
+        SELECT r.id, ra.artist_name, r.title, r.format
         FROM release r
         JOIN release_artist ra ON ra.release_id = r.id AND ra.extra = 0
         ORDER BY r.id
     """)
 
-    releases = [(row["id"], row["artist_name"], row["title"]) for row in rows]
+    releases = [(row["id"], row["artist_name"], row["title"], row["format"]) for row in rows]
     logger.info(f"Loaded {len(releases):,} releases")
     return releases
 
@@ -722,7 +744,12 @@ def prune_releases_copy_swap(
 
         # Tables to copy-swap: (old_table, new_table, columns, id_column)
         tables = [
-            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
+            (
+                "release",
+                "new_release",
+                "id, title, release_year, country, artwork_url, format",
+                "id",
+            ),
             (
                 "release_artist",
                 "new_release_artist",
@@ -864,7 +891,7 @@ SCHEMA_DIR = SCRIPT_DIR.parent / "schema"
 # Tables and their columns to copy (post-dedup: no master_id).
 # Each entry: (table_name, filter_column, columns_list)
 COPY_TABLE_SPEC = [
-    ("release", "id", ["id", "title", "release_year", "country", "artwork_url"]),
+    ("release", "id", ["id", "title", "release_year", "country", "artwork_url", "format"]),
     ("release_artist", "release_id", ["release_id", "artist_name", "extra"]),
     ("release_label", "release_id", ["release_id", "label_name"]),
     ("release_track", "release_id", ["release_id", "sequence", "position", "title", "duration"]),
@@ -1325,7 +1352,7 @@ def classify_fuzzy_batch(
 
 
 def classify_all_releases(
-    releases: list[tuple[int, str, str]],
+    releases: list[tuple[int, str, str]] | list[tuple[int, str, str, str | None]],
     index: LibraryIndex,
     matcher: MultiIndexMatcher,
 ) -> ClassificationReport:
@@ -1333,6 +1360,10 @@ def classify_all_releases(
 
     Groups releases by normalized artist for efficient scoring and
     artist-level REVIEW grouping.
+
+    Accepts 3-tuples (id, artist, title) or 4-tuples (id, artist, title, format).
+    When 4-tuples are provided and the library has format data, exact-match KEEP
+    releases are downgraded to PRUNE if their format doesn't match the library's.
     """
     keep_ids: set[int] = set()
     prune_ids: set[int] = set()
@@ -1340,9 +1371,16 @@ def classify_all_releases(
     review_by_artist: dict[str, list[tuple[int, str, MatchResult]]] = {}
     artist_originals: dict[str, str] = {}
 
+    # Extract format info if 4-tuples are provided
+    release_formats: dict[int, str | None] = {}
+    has_format_data = len(releases) > 0 and len(releases[0]) >= 4
+
     # Group by normalized artist for efficient batch processing
     by_artist: dict[str, list[tuple[int, str, str]]] = {}
-    for release_id, raw_artist, raw_title in releases:
+    for release in releases:
+        release_id, raw_artist, raw_title = release[0], release[1], release[2]
+        if has_format_data:
+            release_formats[release_id] = release[3]  # type: ignore[misc]
         norm_artist = normalize_artist(raw_artist)
         artist_originals.setdefault(norm_artist, raw_artist)
         by_artist.setdefault(norm_artist, []).append((release_id, raw_artist, raw_title))
@@ -1392,6 +1430,11 @@ def classify_all_releases(
     )
 
     # Phase 2: Process exact-match artists (fast: exact pair + two-stage only)
+    # Format filtering is applied here for exact-match KEEP releases: if the library
+    # has format data for the matched (artist, title) pair and the release has a format,
+    # the release is downgraded to PRUNE if its format doesn't match. Fuzzy-match
+    # releases skip format filtering because the matched library pair is not reliably
+    # known (the fuzzy artist match may not correspond to the exact library pair).
     logger.info("Phase 2: Classifying exact-match artists by pair...")
     for norm_artist in exact_artist_match:
         artist_releases = by_artist[norm_artist]
@@ -1399,7 +1442,13 @@ def classify_all_releases(
             norm_title = normalize_title(raw_title)
             result = matcher.classify_known_artist(norm_artist, norm_title)
             if result.decision == Decision.KEEP:
-                keep_ids.add(release_id)
+                # Format filtering for exact-match KEEP releases
+                rel_fmt = release_formats.get(release_id)
+                lib_formats = index.format_by_pair.get((norm_artist, norm_title), set())
+                if not format_matches(rel_fmt, lib_formats):
+                    prune_ids.add(release_id)
+                else:
+                    keep_ids.add(release_id)
             elif result.decision == Decision.PRUNE:
                 prune_ids.add(release_id)
             else:

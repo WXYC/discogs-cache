@@ -18,6 +18,8 @@ from typing import TypedDict
 
 import psycopg
 
+from lib.format_normalization import normalize_format
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -78,10 +80,10 @@ BASE_TABLES: list[TableConfig] = [
     {
         "csv_file": "release.csv",
         "table": "release",
-        "csv_columns": ["id", "title", "country", "released", "master_id"],
-        "db_columns": ["id", "title", "country", "released", "master_id"],
+        "csv_columns": ["id", "title", "country", "released", "format", "master_id"],
+        "db_columns": ["id", "title", "country", "released", "format", "master_id"],
         "required": ["id", "title"],
-        "transforms": {},
+        "transforms": {"format": normalize_format},
         "unique_key": ["id"],
     },
     {

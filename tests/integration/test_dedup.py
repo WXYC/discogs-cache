@@ -103,35 +103,40 @@ def _fresh_import(db_url: str) -> None:
     conn.close()
 
 
+DEDUP_TABLES = [
+    (
+        "release",
+        "new_release",
+        "id, title, release_year, country, artwork_url, released, format",
+        "id",
+    ),
+    (
+        "release_artist",
+        "new_release_artist",
+        "release_id, artist_id, artist_name, extra, role",
+        "release_id",
+    ),
+    (
+        "release_label",
+        "new_release_label",
+        "release_id, label_id, label_name, catno",
+        "release_id",
+    ),
+    (
+        "cache_metadata",
+        "new_cache_metadata",
+        "release_id, cached_at, source, last_validated",
+        "release_id",
+    ),
+]
+
+
 def _run_dedup(db_url: str) -> None:
     """Run the dedup pipeline (base tables only) against the database."""
     conn = psycopg.connect(db_url, autocommit=True)
     delete_count = ensure_dedup_ids(conn)
     if delete_count > 0:
-        # Only base tables + cache_metadata (no track tables)
-        tables = [
-            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
-            (
-                "release_artist",
-                "new_release_artist",
-                "release_id, artist_id, artist_name, extra",
-                "release_id",
-            ),
-            (
-                "release_label",
-                "new_release_label",
-                "release_id, label_name",
-                "release_id",
-            ),
-            (
-                "cache_metadata",
-                "new_cache_metadata",
-                "release_id, cached_at, source, last_validated",
-                "release_id",
-            ),
-        ]
-
-        for old, new, cols, id_col in tables:
+        for old, new, cols, id_col in DEDUP_TABLES:
             copy_table(conn, old, new, cols, id_col)
 
         # Drop FK constraints before swap
@@ -143,7 +148,7 @@ def _run_dedup(db_url: str) -> None:
             ]:
                 cur.execute(stmt)
 
-        for old, new, _, _ in tables:
+        for old, new, _, _ in DEDUP_TABLES:
             swap_tables(conn, old, new)
         add_base_constraints_and_indexes(conn, db_url=db_url)
 
@@ -195,23 +200,23 @@ class TestDedup:
     def _connect(self):
         return psycopg.connect(self.db_url)
 
-    def test_correct_release_kept_for_master_500(self) -> None:
-        """Release 1002 (US, 3 tracks) kept over 1001 (UK, 5 tracks) by country preference."""
+    def test_all_formats_survive_for_master_500(self) -> None:
+        """All three formats (CD, Vinyl, Cassette) survive — dedup is per (master_id, format)."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert ids == [1002]
+        assert ids == [1001, 1002, 1003]
 
-    def test_correct_release_kept_for_master_600(self) -> None:
-        """Release 2002 (DE, 4 tracks) kept over 2001 (UK, 2 tracks) by track count fallback."""
+    def test_all_formats_survive_for_master_600(self) -> None:
+        """Both formats (LP/Vinyl, CD) survive — dedup is per (master_id, format)."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert ids == [2002]
+        assert ids == [2001, 2002]
 
     def test_unique_master_id_release_untouched(self) -> None:
         """Release 3001 (unique master_id 700) is not removed."""
@@ -231,49 +236,36 @@ class TestDedup:
         conn.close()
         assert count == 1
 
-    def test_child_table_rows_cleaned(self) -> None:
-        """Deduped releases have their child table rows removed (not imported)."""
+    def test_all_releases_have_child_rows(self) -> None:
+        """All format-unique releases keep their child table rows."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM release_artist WHERE release_id = 1001")
-            artist_count = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM release_label WHERE release_id = 1001")
-            label_count = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1001")
-            track_count = cur.fetchone()[0]
+            # All three releases in master_id 500 survive (different formats)
+            for rid in (1001, 1002, 1003):
+                cur.execute("SELECT count(*) FROM release_artist WHERE release_id = %s", (rid,))
+                assert cur.fetchone()[0] > 0, f"release_artist missing for {rid}"
         conn.close()
-        assert artist_count == 0
-        assert label_count == 0
-        assert track_count == 0
 
-    def test_kept_release_labels_preserved(self) -> None:
-        """The kept release still has its labels after dedup."""
+    def test_all_releases_have_labels(self) -> None:
+        """All format-unique releases keep their labels after dedup."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT label_name FROM release_label WHERE release_id = 1002 ORDER BY label_name"
+                "SELECT label_name FROM release_label WHERE release_id = 1001 ORDER BY label_name"
             )
             labels = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert labels == ["Capitol Records"]
+        assert "Parlophone" in labels
 
-    def test_deduped_release_has_no_labels(self) -> None:
-        """Releases removed by dedup have no labels."""
+    def test_all_releases_have_tracks(self) -> None:
+        """All format-unique releases have their tracks (imported after dedup)."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM release_label WHERE release_id = 1001")
-            count = cur.fetchone()[0]
-        conn.close()
-        assert count == 0
-
-    def test_kept_release_tracks_preserved(self) -> None:
-        """The kept release still has its tracks (imported after dedup)."""
-        conn = self._connect()
-        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1001")
+            assert cur.fetchone()[0] == 5  # UK CD has 5 tracks
             cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1002")
-            count = cur.fetchone()[0]
+            assert cur.fetchone()[0] == 3  # US Vinyl has 3 tracks
         conn.close()
-        assert count == 3
 
     def test_country_column_preserved(self) -> None:
         """country column exists after dedup copy-swap and has the expected value."""
@@ -284,28 +276,25 @@ class TestDedup:
         conn.close()
         assert country == "US"
 
-    def test_us_preferred_over_track_count(self) -> None:
-        """US release (1002, 3 tracks) kept over UK release (1001, 5 tracks).
+    def test_different_formats_all_survive(self) -> None:
+        """All releases with different formats survive dedup, regardless of country/track count.
 
-        Proves country preference is the deciding factor: the kept release has
-        fewer tracks than the removed one.
+        With format-aware dedup, (master_id, format) groups each have one member,
+        so no releases are deleted from the fixture data.
         """
         conn = self._connect()
         with conn.cursor() as cur:
-            # 1002 should be kept (US, 3 tracks)
-            cur.execute("SELECT count(*) FROM release WHERE id = 1002")
-            assert cur.fetchone()[0] == 1
-            # 1001 should be removed (UK, 5 tracks — more tracks but not US)
-            cur.execute("SELECT count(*) FROM release WHERE id = 1001")
-            assert cur.fetchone()[0] == 0
-            # Verify the kept release has fewer tracks (proving country was decisive)
-            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1002")
-            kept_tracks = cur.fetchone()[0]
+            # All three should survive (different formats: CD, Vinyl, Cassette)
+            cur.execute("SELECT count(*) FROM release WHERE id IN (1001, 1002, 1003)")
+            assert cur.fetchone()[0] == 3
         conn.close()
-        assert kept_tracks == 3, "Kept US release should have 3 tracks (fewer than removed UK's 5)"
 
-    def test_master_id_column_dropped(self) -> None:
-        """master_id column no longer exists after copy-swap (not in SELECT list)."""
+    def test_master_id_column_persists_when_no_dedup(self) -> None:
+        """master_id persists when no duplicates found (copy-swap not triggered).
+
+        With format-aware dedup, each (master_id, format) group in fixtures has one member,
+        so no copy-swap occurs and master_id stays in the schema.
+        """
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute(
@@ -314,7 +303,7 @@ class TestDedup:
             )
             result = cur.fetchone()
         conn.close()
-        assert result is None
+        assert result is not None
 
     def test_primary_key_recreated(self) -> None:
         """Primary key on release(id) exists after dedup."""
@@ -342,27 +331,40 @@ class TestDedup:
         expected = {"release_artist", "release_label", "cache_metadata"}
         assert expected.issubset(fk_tables)
 
-    def test_deduped_release_has_no_tracks(self) -> None:
-        """Releases removed by dedup have no tracks (not imported for them)."""
+    def test_format_column_persists_after_dedup(self) -> None:
+        """format column exists after dedup copy-swap (unlike master_id which is dropped)."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM release_track WHERE release_id = 1001")
-            count = cur.fetchone()[0]
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'release' AND column_name = 'format'"
+            )
+            result = cur.fetchone()
         conn.close()
-        assert count == 0
+        assert result is not None
+
+    def test_format_values_preserved(self) -> None:
+        """format column has the normalized values after dedup."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT format FROM release WHERE id = 1001")
+            assert cur.fetchone()[0] == "CD"
+            cur.execute("SELECT format FROM release WHERE id = 1002")
+            assert cur.fetchone()[0] == "Vinyl"
+        conn.close()
 
     def test_total_release_count_after_dedup(self) -> None:
-        """Total releases: 15 imported - 3 duplicates = 12."""
+        """Total releases: 15 imported (7001 skipped), 0 deduped (all unique formats) = 15."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM release")
             count = cur.fetchone()[0]
         conn.close()
-        # 15 imported (7001 skipped), 1001+1003 removed (master 500), 2001 removed (master 600)
-        assert count == 12
+        # All 15 imported releases survive — each (master_id, format) group has one member
+        assert count == 15
 
-    def test_release_track_count_dropped(self) -> None:
-        """release_track_count table is cleaned up after dedup."""
+    def test_release_track_count_persists_when_no_dedup(self) -> None:
+        """release_track_count persists when no duplicates found (cleanup in dedup path)."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute(
@@ -373,7 +375,8 @@ class TestDedup:
             )
             exists = cur.fetchone()[0]
         conn.close()
-        assert not exists
+        # release_track_count cleanup is inside the if delete_count > 0 block
+        assert exists
 
 
 class TestDedupNoop:
@@ -421,29 +424,7 @@ def _run_dedup_with_labels(db_url: str, library_labels_csv: Path) -> None:
     create_label_match_table(conn)
     delete_count = ensure_dedup_ids(conn)
     if delete_count > 0:
-        tables = [
-            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
-            (
-                "release_artist",
-                "new_release_artist",
-                "release_id, artist_id, artist_name, extra",
-                "release_id",
-            ),
-            (
-                "release_label",
-                "new_release_label",
-                "release_id, label_name",
-                "release_id",
-            ),
-            (
-                "cache_metadata",
-                "new_cache_metadata",
-                "release_id, cached_at, source, last_validated",
-                "release_id",
-            ),
-        ]
-
-        for old, new, cols, id_col in tables:
+        for old, new, cols, id_col in DEDUP_TABLES:
             copy_table(conn, old, new, cols, id_col)
 
         with conn.cursor() as cur:
@@ -454,15 +435,16 @@ def _run_dedup_with_labels(db_url: str, library_labels_csv: Path) -> None:
             ]:
                 cur.execute(stmt)
 
-        for old, new, _, _ in tables:
+        for old, new, _, _ in DEDUP_TABLES:
             swap_tables(conn, old, new)
         add_base_constraints_and_indexes(conn, db_url=db_url)
 
-        with conn.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
-            cur.execute("DROP TABLE IF EXISTS release_track_count")
-            cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
-            cur.execute("DROP TABLE IF EXISTS release_label_match")
+    # Cleanup temp tables regardless of whether dedup ran
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+        cur.execute("DROP TABLE IF EXISTS release_track_count")
+        cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+        cur.execute("DROP TABLE IF EXISTS release_label_match")
     conn.close()
 
 
@@ -485,32 +467,23 @@ class TestDedupWithLabels:
     def _connect(self):
         return psycopg.connect(self.db_url)
 
-    def test_label_match_overrides_track_count_master_500(self) -> None:
-        """Release 1001 (Parlophone, 3 tracks) wins over 1002 (Capitol, 5 tracks)."""
+    def test_all_formats_survive_with_labels_master_500(self) -> None:
+        """All formats survive — dedup is per (master_id, format), labels only rank within format."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert ids == [1001]
+        assert ids == [1001, 1002, 1003]
 
-    def test_label_match_overrides_track_count_master_600(self) -> None:
-        """Release 2001 (Factory, 2 tracks) wins over 2002 (Qwest, 4 tracks)."""
+    def test_all_formats_survive_with_labels_master_600(self) -> None:
+        """Both formats survive — LP and CD are different format groups."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (2001, 2002) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert ids == [2001]
-
-    def test_unmatched_releases_use_track_count(self) -> None:
-        """Releases with unique master_ids are not affected by label matching."""
-        conn = self._connect()
-        with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM release WHERE id IN (5001, 5002)")
-            count = cur.fetchone()[0]
-        conn.close()
-        assert count == 2
+        assert ids == [2001, 2002]
 
     def test_unique_and_null_master_id_untouched(self) -> None:
         """Releases with unique or NULL master_id survive label-aware dedup."""
@@ -534,13 +507,13 @@ class TestDedupWithLabels:
         assert count == 0
 
     def test_total_release_count_after_dedup(self) -> None:
-        """Same total: 15 imported - 3 duplicates = 12 (just different winners)."""
+        """All 15 survive — each (master_id, format) group has one member."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM release")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 12
+        assert count == 15
 
 
 class TestDedupFallback:
@@ -601,29 +574,7 @@ def _run_dedup_with_labels_and_hierarchy(
     create_label_match_table(conn)
     delete_count = ensure_dedup_ids(conn)
     if delete_count > 0:
-        tables = [
-            ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
-            (
-                "release_artist",
-                "new_release_artist",
-                "release_id, artist_id, artist_name, extra",
-                "release_id",
-            ),
-            (
-                "release_label",
-                "new_release_label",
-                "release_id, label_name",
-                "release_id",
-            ),
-            (
-                "cache_metadata",
-                "new_cache_metadata",
-                "release_id, cached_at, source, last_validated",
-                "release_id",
-            ),
-        ]
-
-        for old, new, cols, id_col in tables:
+        for old, new, cols, id_col in DEDUP_TABLES:
             copy_table(conn, old, new, cols, id_col)
 
         with conn.cursor() as cur:
@@ -634,16 +585,17 @@ def _run_dedup_with_labels_and_hierarchy(
             ]:
                 cur.execute(stmt)
 
-        for old, new, _, _ in tables:
+        for old, new, _, _ in DEDUP_TABLES:
             swap_tables(conn, old, new)
         add_base_constraints_and_indexes(conn, db_url=db_url)
 
-        with conn.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
-            cur.execute("DROP TABLE IF EXISTS release_track_count")
-            cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
-            cur.execute("DROP TABLE IF EXISTS release_label_match")
-            cur.execute("DROP TABLE IF EXISTS label_hierarchy")
+    # Cleanup temp tables regardless of whether dedup ran
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+        cur.execute("DROP TABLE IF EXISTS release_track_count")
+        cur.execute("DROP TABLE IF EXISTS wxyc_label_pref")
+        cur.execute("DROP TABLE IF EXISTS release_label_match")
+        cur.execute("DROP TABLE IF EXISTS label_hierarchy")
     conn.close()
 
 
@@ -667,14 +619,14 @@ class TestDedupWithLabelHierarchy:
     def _connect(self):
         return psycopg.connect(self.db_url)
 
-    def test_sublabel_match_for_master_500(self) -> None:
-        """Release 1001 (Parlophone) wins — library says Parlophone, direct match."""
+    def test_all_formats_survive_with_hierarchy_master_500(self) -> None:
+        """All formats survive — dedup is per (master_id, format)."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM release WHERE id IN (1001, 1002, 1003) ORDER BY id")
             ids = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert ids == [1001]
+        assert ids == [1001, 1002, 1003]
 
     def test_label_hierarchy_temp_table_cleaned_up(self) -> None:
         """label_hierarchy table is dropped after dedup."""
@@ -689,13 +641,13 @@ class TestDedupWithLabelHierarchy:
         assert count == 0
 
     def test_total_release_count_same(self) -> None:
-        """Same total: 15 imported - 3 duplicates = 12."""
+        """All 15 survive — each (master_id, format) group has one member."""
         conn = self._connect()
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM release")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 12
+        assert count == 15
 
 
 class TestEnsureDedupIdsAlreadyExists:
@@ -971,3 +923,122 @@ class TestAddConstraintsAndIndexes:
             "idx_release_track_artist_release_id",
         }
         assert expected_indexes.issubset(indexes)
+
+
+class TestFormatAwareDedup:
+    """Dedup partitions by (master_id, format): same-format duplicates are deduped,
+    different-format releases survive."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _set_up(self, db_url):
+        self.__class__._db_url = db_url
+        conn = psycopg.connect(db_url, autocommit=True)
+        _drop_all_tables(conn)
+        with conn.cursor() as cur:
+            cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            # Two CD releases with same master_id — only one should survive
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, format, country) "
+                "VALUES (1, 'Album', 100, 'CD', 'UK')"
+            )
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, format, country) "
+                "VALUES (2, 'Album', 100, 'CD', 'US')"
+            )
+            # One Vinyl release with same master_id — should survive alongside the CD winner
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, format, country) "
+                "VALUES (3, 'Album', 100, 'Vinyl', 'UK')"
+            )
+            # Two NULL-format releases with same master_id — NULLs group together, one survives
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, country) "
+                "VALUES (4, 'Album B', 200, 'US')"
+            )
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, country) "
+                "VALUES (5, 'Album B', 200, 'UK')"
+            )
+            # Track counts for ranking
+            cur.execute("""
+                CREATE UNLOGGED TABLE release_track_count (
+                    release_id integer PRIMARY KEY,
+                    track_count integer NOT NULL
+                )
+            """)
+            cur.execute(
+                "INSERT INTO release_track_count VALUES (1, 5), (2, 3), (3, 4), (4, 2), (5, 1)"
+            )
+        conn.close()
+
+    @pytest.fixture(autouse=True)
+    def _store_url(self):
+        self.db_url = self.__class__._db_url
+
+    def _connect(self):
+        return psycopg.connect(self.db_url)
+
+    def test_same_format_deduped_normally(self) -> None:
+        """Two CD releases sharing master_id: only the US one survives (country preference)."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        count = ensure_dedup_ids(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT release_id FROM dedup_delete_ids ORDER BY release_id")
+            deleted = [row[0] for row in cur.fetchall()]
+            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+            cur.execute("DROP TABLE IF EXISTS release_track_count")
+        conn.close()
+        # Release 1 (UK CD) deleted in favor of release 2 (US CD)
+        # Release 5 (UK, NULL format) deleted in favor of release 4 (US, NULL format)
+        assert 1 in deleted
+        assert 5 in deleted
+        assert count == 2
+
+    def test_different_format_survives(self) -> None:
+        """Vinyl release (3) is not in dedup_delete_ids — different format group."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        # Recreate track counts and run dedup
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE UNLOGGED TABLE IF NOT EXISTS release_track_count (
+                    release_id integer PRIMARY KEY,
+                    track_count integer NOT NULL
+                )
+            """)
+            cur.execute(
+                "INSERT INTO release_track_count VALUES (1, 5), (2, 3), (3, 4), (4, 2), (5, 1) "
+                "ON CONFLICT DO NOTHING"
+            )
+        ensure_dedup_ids(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT release_id FROM dedup_delete_ids")
+            deleted = {row[0] for row in cur.fetchall()}
+            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+            cur.execute("DROP TABLE IF EXISTS release_track_count")
+        conn.close()
+        assert 3 not in deleted
+
+    def test_null_format_groups_together(self) -> None:
+        """Releases with NULL format group together by master_id only."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE UNLOGGED TABLE IF NOT EXISTS release_track_count (
+                    release_id integer PRIMARY KEY,
+                    track_count integer NOT NULL
+                )
+            """)
+            cur.execute(
+                "INSERT INTO release_track_count VALUES (1, 5), (2, 3), (3, 4), (4, 2), (5, 1) "
+                "ON CONFLICT DO NOTHING"
+            )
+        ensure_dedup_ids(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT release_id FROM dedup_delete_ids")
+            deleted = {row[0] for row in cur.fetchall()}
+            cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+            cur.execute("DROP TABLE IF EXISTS release_track_count")
+        conn.close()
+        # Release 5 (UK, NULL format) should be deleted — groups with release 4 (US, NULL format)
+        assert 5 in deleted
+        assert 4 not in deleted
