@@ -117,11 +117,12 @@ class TestTablesConfig:
         assert "artist_id" in ra_config["csv_columns"]
         assert "artist_id" in ra_config["db_columns"]
 
-    def test_release_table_transforms_released_to_year(self) -> None:
-        """The released field should be transformed via extract_year."""
+    def test_release_table_imports_released_as_raw_text(self) -> None:
+        """The released field should be imported as raw text (no transform)."""
         release_config = next(t for t in TABLES if t["table"] == "release")
-        assert "released" in release_config["transforms"]
-        assert release_config["transforms"]["released"] is extract_year
+        assert "released" in release_config["csv_columns"]
+        assert "released" in release_config["db_columns"]
+        assert "released" not in release_config["transforms"]
 
     @pytest.mark.parametrize(
         "table_name",
@@ -426,7 +427,9 @@ class TestMainArgParsing:
             patch.object(_ic.psycopg, "connect", return_value=mock_conn),
             patch.object(_ic, "_import_tables", return_value=100) as mock_import,
             patch.object(_ic, "import_artwork", return_value=10),
+            patch.object(_ic, "populate_release_year", return_value=50),
             patch.object(_ic, "populate_cache_metadata", return_value=50),
+            patch.object(_ic, "import_artist_details", return_value=20),
         ):
             _ic.main()
 
@@ -453,8 +456,10 @@ class TestMainArgParsing:
             patch.object(_ic.psycopg, "connect", return_value=mock_conn),
             patch.object(_ic, "_import_tables_parallel", return_value=100) as mock_parallel,
             patch.object(_ic, "import_artwork", return_value=10),
+            patch.object(_ic, "populate_release_year", return_value=50),
             patch.object(_ic, "populate_cache_metadata", return_value=50),
             patch.object(_ic, "create_track_count_table", return_value=20),
+            patch.object(_ic, "import_artist_details", return_value=20),
         ):
             _ic.main()
 

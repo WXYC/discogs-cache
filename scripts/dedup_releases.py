@@ -576,14 +576,14 @@ def main():
     # Step 2: Copy each table (keeping only non-duplicate rows)
     # Only base tables + cache_metadata (tracks are imported after dedup)
     tables = [
-        ("release", "new_release", "id, title, release_year, country, artwork_url", "id"),
+        ("release", "new_release", "id, title, release_year, country, artwork_url, released", "id"),
         (
             "release_artist",
             "new_release_artist",
-            "release_id, artist_id, artist_name, extra",
+            "release_id, artist_id, artist_name, extra, role",
             "release_id",
         ),
-        ("release_label", "new_release_label", "release_id, label_name", "release_id"),
+        ("release_label", "new_release_label", "release_id, label_id, label_name, catno", "release_id"),
         (
             "cache_metadata",
             "new_cache_metadata",

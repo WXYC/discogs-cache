@@ -22,6 +22,11 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 
 -- Drop in FK order: children first, then parent
 DROP TABLE IF EXISTS cache_metadata CASCADE;
+DROP TABLE IF EXISTS artist_url CASCADE;
+DROP TABLE IF EXISTS artist_member CASCADE;
+DROP TABLE IF EXISTS artist_name_variation CASCADE;
+DROP TABLE IF EXISTS artist_alias CASCADE;
+DROP TABLE IF EXISTS artist CASCADE;
 DROP TABLE IF EXISTS release_track_artist CASCADE;
 DROP TABLE IF EXISTS release_track CASCADE;
 DROP TABLE IF EXISTS release_label CASCADE;
@@ -35,6 +40,7 @@ CREATE TABLE release (
     release_year    smallint,
     country         text,
     artwork_url     text,
+    released        text,              -- full date string, e.g. "2024-03-15"
     master_id       integer          -- used by dedup, dropped after dedup copy-swap
 );
 
@@ -43,13 +49,16 @@ CREATE TABLE release_artist (
     release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
     artist_id       integer,             -- Discogs artist ID (nullable for API-fetched releases)
     artist_name     text NOT NULL,
-    extra           integer DEFAULT 0  -- 0 = main artist, 1 = extra credit
+    extra           integer DEFAULT 0,  -- 0 = main artist, 1 = extra credit
+    role            text               -- role for extra artists: "Producer", "Mixed By", etc.
 );
 
 -- Labels on releases
 CREATE TABLE release_label (
     release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
-    label_name      text NOT NULL
+    label_id        integer,
+    label_name      text NOT NULL,
+    catno           text
 );
 
 -- Tracks on releases
@@ -66,6 +75,41 @@ CREATE TABLE release_track_artist (
     release_id      integer NOT NULL REFERENCES release(id) ON DELETE CASCADE,
     track_sequence  integer NOT NULL,
     artist_name     text NOT NULL
+);
+
+-- ============================================
+-- Artist detail tables
+-- ============================================
+
+CREATE TABLE artist (
+    id              integer PRIMARY KEY,
+    name            text NOT NULL,
+    profile         text,
+    image_url       text,
+    fetched_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE artist_alias (
+    artist_id       integer NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
+    alias_id        integer,
+    alias_name      text NOT NULL
+);
+
+CREATE TABLE artist_name_variation (
+    artist_id       integer NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
+    name            text NOT NULL
+);
+
+CREATE TABLE artist_member (
+    artist_id       integer NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
+    member_id       integer NOT NULL,
+    member_name     text NOT NULL,
+    active          boolean DEFAULT true
+);
+
+CREATE TABLE artist_url (
+    artist_id       integer NOT NULL REFERENCES artist(id) ON DELETE CASCADE,
+    url             text NOT NULL
 );
 
 -- ============================================
@@ -88,6 +132,12 @@ CREATE INDEX IF NOT EXISTS idx_release_artist_release_id ON release_artist(relea
 CREATE INDEX IF NOT EXISTS idx_release_label_release_id ON release_label(release_id);
 CREATE INDEX IF NOT EXISTS idx_release_track_release_id ON release_track(release_id);
 CREATE INDEX IF NOT EXISTS idx_release_track_artist_release_id ON release_track_artist(release_id);
+
+-- Artist detail indexes
+CREATE INDEX IF NOT EXISTS idx_artist_alias_artist_id ON artist_alias(artist_id);
+CREATE INDEX IF NOT EXISTS idx_artist_name_variation_artist_id ON artist_name_variation(artist_id);
+CREATE INDEX IF NOT EXISTS idx_artist_member_artist_id ON artist_member(artist_id);
+CREATE INDEX IF NOT EXISTS idx_artist_url_artist_id ON artist_url(artist_id);
 
 -- Partial index on master_id for dedup performance.
 -- Transient: dropped automatically by dedup copy-swap (which excludes master_id).
