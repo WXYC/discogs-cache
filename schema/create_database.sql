@@ -41,6 +41,7 @@ CREATE TABLE release (
     country         text,
     artwork_url     text,
     released        text,              -- full date string, e.g. "2024-03-15"
+    format          text,              -- normalized format category: 'Vinyl', 'CD', etc.
     master_id       integer          -- used by dedup, dropped after dedup copy-swap
 );
 

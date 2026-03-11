@@ -111,6 +111,22 @@ class TestTablesConfig:
         assert "country" in release_config["csv_columns"]
         assert "country" in release_config["db_columns"]
 
+    def test_release_table_includes_format(self) -> None:
+        """The release table must import format for format-aware dedup."""
+        release_config = next(t for t in TABLES if t["table"] == "release")
+        assert "format" in release_config["csv_columns"]
+        assert "format" in release_config["db_columns"]
+
+    def test_release_table_transforms_format(self) -> None:
+        """The format field should be transformed via normalize_format."""
+        release_config = next(t for t in TABLES if t["table"] == "release")
+        assert "format" in release_config["transforms"]
+        # Verify it normalizes correctly
+        transform = release_config["transforms"]["format"]
+        assert transform("2xLP") == "Vinyl"
+        assert transform("CD") == "CD"
+        assert transform(None) is None
+
     def test_release_artist_table_includes_artist_id(self) -> None:
         """The release_artist table must import artist_id for alias-enhanced filtering."""
         ra_config = next(t for t in TABLES if t["table"] == "release_artist")

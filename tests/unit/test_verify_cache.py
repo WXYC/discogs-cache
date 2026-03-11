@@ -607,18 +607,18 @@ class TestLoadDiscogsReleases:
 
     @pytest.mark.asyncio
     async def test_returns_release_tuples(self):
-        """Returns list of (release_id, artist_name, title) tuples."""
+        """Returns list of (release_id, artist_name, title, format) tuples."""
         mock_conn = MagicMock()
         mock_conn.fetch = AsyncMock(
             return_value=[
-                {"id": 28138, "title": "Confield", "artist_name": "Autechre"},
-                {"id": 12345, "title": "OK Computer", "artist_name": "Radiohead"},
+                {"id": 28138, "title": "Confield", "artist_name": "Autechre", "format": "CD"},
+                {"id": 12345, "title": "OK Computer", "artist_name": "Radiohead", "format": None},
             ]
         )
         releases = await load_discogs_releases(mock_conn)
         assert len(releases) == 2
-        assert releases[0] == (28138, "Autechre", "Confield")
-        assert releases[1] == (12345, "Radiohead", "OK Computer")
+        assert releases[0] == (28138, "Autechre", "Confield", "CD")
+        assert releases[1] == (12345, "Radiohead", "OK Computer", None)
 
     @pytest.mark.asyncio
     async def test_query_filters_extra_artists(self):
@@ -977,3 +977,151 @@ class TestPrintReport:
         captured = capsys.readouterr()
         assert "REVIEW" in captured.out
         assert "artist-level decisions needed" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Format-Aware LibraryIndex
+# ---------------------------------------------------------------------------
+
+normalize_library_format = _vc.normalize_library_format
+format_matches = _vc.format_matches
+
+
+class TestLibraryIndexFormat:
+    """Test format-aware LibraryIndex construction and matching."""
+
+    def test_from_rows_3_tuples_builds_format_by_pair(self):
+        """LibraryIndex built from 3-tuples has format_by_pair."""
+        rows = [
+            ("Radiohead", "OK Computer", "CD"),
+            ("Radiohead", "OK Computer", "LP"),
+            ("Joy Division", "Unknown Pleasures", None),
+        ]
+        idx = LibraryIndex.from_rows(rows)
+        norm_radio = normalize_artist("Radiohead")
+        norm_ok = normalize_title("OK Computer")
+        assert (norm_radio, norm_ok) in idx.format_by_pair
+        assert idx.format_by_pair[(norm_radio, norm_ok)] == {"CD", "Vinyl"}
+
+    def test_from_rows_multiple_formats(self):
+        """Library with both CD and LP for same album: both in format set."""
+        rows = [
+            ("Cat Power", "Moon Pix", "CD"),
+            ("Cat Power", "Moon Pix", "LP"),
+        ]
+        idx = LibraryIndex.from_rows(rows)
+        norm_artist = normalize_artist("Cat Power")
+        norm_title = normalize_title("Moon Pix")
+        formats = idx.format_by_pair.get((norm_artist, norm_title), set())
+        assert "CD" in formats
+        assert "Vinyl" in formats
+
+    def test_from_rows_null_format(self):
+        """NULL format produces None in format set."""
+        rows = [("Joy Division", "Closer", None)]
+        idx = LibraryIndex.from_rows(rows)
+        norm_artist = normalize_artist("Joy Division")
+        norm_title = normalize_title("Closer")
+        formats = idx.format_by_pair.get((norm_artist, norm_title), set())
+        assert None in formats
+
+    def test_from_rows_2_tuples_backward_compatible(self):
+        """2-tuple rows produce empty format_by_pair (backward-compatible)."""
+        rows = [("Radiohead", "OK Computer"), ("Joy Division", "Unknown Pleasures")]
+        idx = LibraryIndex.from_rows(rows)
+        assert idx.format_by_pair == {}
+
+    def test_from_sqlite_with_format(self, tmp_path):
+        """from_sqlite reads format column when present."""
+        import sqlite3
+
+        db_path = tmp_path / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute(
+            "CREATE TABLE library (id INTEGER PRIMARY KEY, artist TEXT, title TEXT, format TEXT)"
+        )
+        cur.execute(
+            "INSERT INTO library (artist, title, format) VALUES ('Radiohead', 'OK Computer', 'CD')"
+        )
+        cur.execute(
+            "INSERT INTO library (artist, title, format) VALUES ('Radiohead', 'OK Computer', 'LP')"
+        )
+        conn.commit()
+        conn.close()
+
+        idx = LibraryIndex.from_sqlite(db_path)
+        norm_artist = normalize_artist("Radiohead")
+        norm_title = normalize_title("OK Computer")
+        assert (norm_artist, norm_title) in idx.format_by_pair
+        assert idx.format_by_pair[(norm_artist, norm_title)] == {"CD", "Vinyl"}
+
+    def test_from_sqlite_without_format(self, tmp_path):
+        """from_sqlite falls back gracefully when format column is missing."""
+        import sqlite3
+
+        db_path = tmp_path / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE library (id INTEGER PRIMARY KEY, artist TEXT, title TEXT)")
+        cur.execute("INSERT INTO library (artist, title) VALUES ('Radiohead', 'OK Computer')")
+        conn.commit()
+        conn.close()
+
+        idx = LibraryIndex.from_sqlite(db_path)
+        assert idx.format_by_pair == {}
+        # Should still have the pair in exact_pairs
+        norm_artist = normalize_artist("Radiohead")
+        norm_title = normalize_title("OK Computer")
+        assert (norm_artist, norm_title) in idx.exact_pairs
+
+
+class TestFormatFilterClassification:
+    """Test format-based filtering in classify_all_releases."""
+
+    def test_format_filter_keeps_matching_format(self):
+        """KEEP release with matching format stays KEEP."""
+        rows = [("Radiohead", "OK Computer", "CD")]
+        idx = LibraryIndex.from_rows(rows)
+        matcher = MultiIndexMatcher(idx)
+        releases = [(1, "Radiohead", "OK Computer", "CD")]
+        report = classify_all_releases(releases, idx, matcher)
+        assert 1 in report.keep_ids
+
+    def test_format_filter_prunes_mismatching_format(self):
+        """KEEP release with mismatching format is downgraded to PRUNE."""
+        rows = [("Radiohead", "OK Computer", "CD")]
+        idx = LibraryIndex.from_rows(rows)
+        matcher = MultiIndexMatcher(idx)
+        # Release is Cassette, but library only has CD
+        releases = [(1, "Radiohead", "OK Computer", "Cassette")]
+        report = classify_all_releases(releases, idx, matcher)
+        assert 1 in report.prune_ids
+
+    def test_format_filter_keeps_null_release_format(self):
+        """KEEP release with NULL format stays KEEP (graceful degradation)."""
+        rows = [("Radiohead", "OK Computer", "CD")]
+        idx = LibraryIndex.from_rows(rows)
+        matcher = MultiIndexMatcher(idx)
+        releases = [(1, "Radiohead", "OK Computer", None)]
+        report = classify_all_releases(releases, idx, matcher)
+        assert 1 in report.keep_ids
+
+    def test_format_filter_keeps_null_library_format(self):
+        """KEEP release when library has no format data stays KEEP."""
+        # 2-tuple rows: no format data
+        rows = [("Radiohead", "OK Computer")]
+        idx = LibraryIndex.from_rows(rows)
+        matcher = MultiIndexMatcher(idx)
+        releases = [(1, "Radiohead", "OK Computer", "CD")]
+        report = classify_all_releases(releases, idx, matcher)
+        assert 1 in report.keep_ids
+
+    def test_format_filter_null_release_format_with_library_formats(self):
+        """Library has format data but release format is NULL: stays KEEP (graceful degradation)."""
+        rows = [("Radiohead", "OK Computer", "CD"), ("Radiohead", "OK Computer", "LP")]
+        idx = LibraryIndex.from_rows(rows)
+        matcher = MultiIndexMatcher(idx)
+        releases = [(1, "Radiohead", "OK Computer", None)]
+        report = classify_all_releases(releases, idx, matcher)
+        assert 1 in report.keep_ids
