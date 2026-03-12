@@ -1515,8 +1515,9 @@ def classify_all_releases(
             releases_processed += len(by_artist[norm_artist])
             token_pruned += 1
 
+    truly_fuzzy_set = set(truly_fuzzy)
     token_pruned_releases = (
-        sum(len(by_artist[a]) for a in fuzzy_needed if a not in set(truly_fuzzy))
+        sum(len(by_artist[a]) for a in fuzzy_needed if a not in truly_fuzzy_set)
         if token_pruned
         else 0
     )

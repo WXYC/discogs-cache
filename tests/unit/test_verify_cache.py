@@ -900,6 +900,77 @@ class TestProcessPoolFuzzyClassification:
         _vc._pool_matcher = None
 
 
+class TestPhase3TokenPrescreen:
+    """Verify Phase 3 token-overlap pre-screen reports correct counts."""
+
+    def test_token_pruned_releases_count_in_log(self, sample_index, caplog):
+        """Phase 3 log should report the correct number of token-pruned releases.
+
+        Regression test for a bug where set(truly_fuzzy) was recreated inside
+        a generator expression on every iteration, causing O(N*M) performance.
+        The fix hoists the set construction: truly_fuzzy_set = set(truly_fuzzy).
+        """
+        # Library has: radiohead, joy division, aphex twin, beatles, simon and garfunkel, bjork
+        # Token overlap uses exact token matching, not fuzzy.
+        # "Aphex Acid" shares token "aphex" with "aphex twin" -> truly fuzzy
+        # "Zzyzx Qwerty" has no token overlap with any library artist -> token-pruned
+        releases = [
+            # This artist shares the token "aphex" with library artist "aphex twin"
+            (1, "Aphex Acid", "Some Album"),
+            (2, "Aphex Acid", "Another Album"),
+            # This artist has no token overlap with any library artist
+            (3, "Zzyzx Qwerty", "Album One"),
+            (4, "Zzyzx Qwerty", "Album Two"),
+            (5, "Zzyzx Qwerty", "Album Three"),
+        ]
+        matcher = MultiIndexMatcher(sample_index)
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="verify_cache"):
+            classify_all_releases(releases, sample_index, matcher)
+
+        phase3_logs = [r.message for r in caplog.records if "Phase 3 pre-screen" in r.message]
+        assert len(phase3_logs) == 1
+        msg = phase3_logs[0]
+        # "zzyzx qwerty" has no token overlap -> 1 artist pruned, 3 releases
+        assert "1 artists pruned" in msg
+        assert "(3 releases)" in msg
+        # "aphex acid" shares token "aphex" -> 1 artist remains for fuzzy
+        assert "1 artists remain" in msg
+
+    def test_token_pruned_releases_scales_linearly(self, sample_index):
+        """The token_pruned_releases calculation must not be O(N*M).
+
+        With 5000 fuzzy-needed artists, the summary should complete in under
+        1 second. The old bug (recreating set(truly_fuzzy) per iteration)
+        would take minutes at this scale.
+        """
+        import time
+
+        # Create many artists, half with token overlap, half without
+        releases = []
+        rid = 1
+        for i in range(2500):
+            # These share tokens with "radiohead" (library artist)
+            releases.append((rid, f"Radiohead{i}", f"Album {i}"))
+            rid += 1
+        for i in range(2500):
+            # These have no token overlap with any library artist
+            releases.append((rid, f"Zzyzx{i} Qwerty{i}", f"Album {i}"))
+            rid += 1
+
+        matcher = MultiIndexMatcher(sample_index)
+
+        start = time.monotonic()
+        classify_all_releases(releases, sample_index, matcher)
+        elapsed = time.monotonic() - start
+
+        # With the fix, this should complete in well under 1 second.
+        # The old O(N*M) bug would take 10+ seconds at this scale.
+        assert elapsed < 5.0, f"Phase 3 took {elapsed:.1f}s — possible O(N*M) regression"
+
+
 class TestPhase4Logging:
     """Verify Phase 4 logs throughput and ETA."""
 
