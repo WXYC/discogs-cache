@@ -315,15 +315,23 @@ def run_step(description: str, cmd: list[str], **kwargs) -> None:
     Merges stderr into stdout to avoid threading complexity.  Each line
     is logged at INFO level as it arrives, giving real-time visibility
     into long-running steps like CSV import.
+
+    PYTHONUNBUFFERED=1 is injected into the subprocess environment so
+    that Python child processes flush stdout/stderr immediately.  Without
+    this, pipe-connected subprocesses use full buffering and log lines
+    can be delayed indefinitely.
     """
     logger.info("Step: %s", description)
     start = time.monotonic()
+    env = kwargs.pop("env", None) or os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=env,
         **kwargs,
     )
     for line in proc.stdout:

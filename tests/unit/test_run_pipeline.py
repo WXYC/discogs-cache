@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -63,6 +64,37 @@ class TestRunStepStreaming:
             )
         logged = [r.message for r in caplog.records]
         assert any("err_msg" in msg for msg in logged)
+
+    def test_sets_pythonunbuffered_for_subprocess(self) -> None:
+        """PYTHONUNBUFFERED=1 is set so subprocess output streams immediately."""
+        with patch("subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.stdout = iter([])
+            mock_proc.returncode = 0
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
+
+            run_pipeline.run_step("test", [sys.executable, "-c", "pass"])
+
+            call_kwargs = mock_popen.call_args
+            env = call_kwargs.kwargs.get("env") or call_kwargs[1].get("env")
+            assert env is not None, "run_step should pass env to Popen"
+            assert env.get("PYTHONUNBUFFERED") == "1"
+
+    def test_preserves_caller_env_with_unbuffered(self, caplog) -> None:
+        """Caller-provided env vars are preserved alongside PYTHONUNBUFFERED."""
+        with caplog.at_level(logging.INFO, logger=run_pipeline.logger.name):
+            run_pipeline.run_step(
+                "env test",
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; print(os.environ.get('MY_VAR', 'missing'))",
+                ],
+                env={**os.environ, "MY_VAR": "hello"},
+            )
+        logged = [r.message for r in caplog.records]
+        assert any("hello" in msg for msg in logged)
 
 
 class TestArgParsing:
