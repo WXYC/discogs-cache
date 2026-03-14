@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import re
 
-# Quantity prefix pattern: "2x", "3x", etc.
+# Quantity prefix pattern: "2x", "3x", etc. (Discogs format strings)
 _QUANTITY_RE = re.compile(r"^\d+x", re.IGNORECASE)
+
+# Quantity suffix pattern: " x 2", " x 3 box", etc. (WXYC library format strings)
+_LIB_QUANTITY_SUFFIX_RE = re.compile(r"\s+x\s+\d+(\s+box)?$", re.IGNORECASE)
 
 # Mapping from lowercase format string to category.
 _FORMAT_MAP: dict[str, str] = {
@@ -82,7 +85,18 @@ def normalize_library_format(raw: str | None) -> str | None:
     if not fmt:
         return None
 
-    return _FORMAT_MAP.get(fmt.lower())
+    # Strip quantity suffix: " x 2", " x 3 box", etc.
+    fmt = _LIB_QUANTITY_SUFFIX_RE.sub("", fmt)
+    lowered = fmt.lower()
+
+    # Handle "vinyl - SIZE" compound format
+    if lowered.startswith("vinyl - "):
+        size = fmt[len("vinyl - ") :].strip()
+        if size:
+            return _FORMAT_MAP.get(size.lower(), "Vinyl")
+        return "Vinyl"
+
+    return _FORMAT_MAP.get(lowered)
 
 
 def format_matches(release_format: str | None, library_formats: set[str | None]) -> bool:
