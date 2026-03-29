@@ -30,7 +30,7 @@ jobs:
           LIBRARY_SSH_HOST: ${{ secrets.LIBRARY_SSH_HOST }}
 
       - name: Run library sync
-        run: scripts/sync-library.sh --notify
+        run: scripts/sync-library.sh
         env:
           LIBRARY_SSH_HOST: ${{ secrets.LIBRARY_SSH_HOST }}
           LIBRARY_SSH_USER: ${{ secrets.LIBRARY_SSH_USER }}
@@ -41,4 +41,3 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           STAGING_URL: ${{ secrets.STAGING_URL }}
           PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
-          SLACK_MONITORING_WEBHOOK: ${{ secrets.SLACK_MONITORING_WEBHOOK }}
