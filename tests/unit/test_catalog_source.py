@@ -76,7 +76,9 @@ class TestTubafrenzySourceFetchLibraryRows:
 
     @patch("lib.catalog_source.connect_mysql")
     def test_returns_list_of_dicts(self, mock_connect) -> None:
-        cursor = _make_mock_cursor([(1, "DOGA", "Juana Molina", "JM", 42, 1, "Rock", "LP", None)])
+        cursor = _make_mock_cursor([
+            (1, "DOGA", "Juana Molina", "JM", 42, 1, "Rock", "LP", None, "Sonamos")
+        ])
         mock_connect.return_value.cursor.return_value = cursor
 
         source = TubafrenzySource("mysql://user:pass@host/db")
@@ -92,6 +94,21 @@ class TestTubafrenzySourceFetchLibraryRows:
         assert rows[0]["genre"] == "Rock"
         assert rows[0]["format"] == "LP"
         assert rows[0]["alternate_artist_name"] is None
+        assert rows[0]["label"] == "Sonamos"
+
+    @patch("lib.catalog_source.connect_mysql")
+    def test_returns_null_label(self, mock_connect) -> None:
+        """Rows without a matching rotation release should have label=None."""
+        cursor = _make_mock_cursor([
+            (1, "DOGA", "Juana Molina", "JM", 42, 1, "Rock", "LP", None, None)
+        ])
+        mock_connect.return_value.cursor.return_value = cursor
+
+        source = TubafrenzySource("mysql://user:pass@host/db")
+        rows = source.fetch_library_rows()
+
+        assert len(rows) == 1
+        assert rows[0]["label"] is None
 
     @patch("lib.catalog_source.connect_mysql")
     def test_uses_dict_cursor(self, mock_connect) -> None:
@@ -256,9 +273,10 @@ class TestBackendServiceSourceFetchLibraryRows:
             ("genre",),
             ("format",),
             ("alternate_artist_name",),
+            ("label",),
         ]
         cursor.fetchall.return_value = [
-            (1, "DOGA", "Juana Molina", "JM", 42, 1, "Rock", "LP", None)
+            (1, "DOGA", "Juana Molina", "JM", 42, 1, "Rock", "LP", None, None)
         ]
 
         source = BackendServiceSource("postgresql://user:pass@host/db")
@@ -268,6 +286,7 @@ class TestBackendServiceSourceFetchLibraryRows:
         assert rows[0]["id"] == 1
         assert rows[0]["title"] == "DOGA"
         assert rows[0]["artist"] == "Juana Molina"
+        assert rows[0]["label"] is None
 
     @patch("lib.catalog_source.psycopg")
     def test_sql_references_wxyc_schema(self, mock_psycopg) -> None:

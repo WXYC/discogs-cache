@@ -39,9 +39,8 @@ MYSQL_PASSWORD = os.environ.get("LIBRARY_DB_PASSWORD", "")
 MYSQL_DATABASE = os.environ.get("LIBRARY_DB_NAME", "wxyc_library")
 
 # Output path (override with LIBRARY_DB_OUTPUT_PATH env var)
-OUTPUT_PATH = Path(os.environ.get("LIBRARY_DB_OUTPUT_PATH", "")) or (
-    Path(__file__).parent.parent / "library.db"
-)
+_output_env = os.environ.get("LIBRARY_DB_OUTPUT_PATH", "")
+OUTPUT_PATH = Path(_output_env) if _output_env else (Path(__file__).parent.parent / "library.db")
 
 # SQL query to extract library data
 LIBRARY_QUERY = """
@@ -54,11 +53,19 @@ SELECT
     r.CALL_NUMBERS as release_call_number,
     g.REFERENCE_NAME as genre,
     f.REFERENCE_NAME as format,
-    r.ALTERNATE_ARTIST_NAME as alternate_artist_name
+    r.ALTERNATE_ARTIST_NAME as alternate_artist_name,
+    label_sub.label_name as label
 FROM LIBRARY_RELEASE r
 JOIN LIBRARY_CODE lc ON r.LIBRARY_CODE_ID = lc.ID
 JOIN FORMAT f ON r.FORMAT_ID = f.ID
 JOIN GENRE g ON lc.GENRE_ID = g.ID
+LEFT JOIN (
+    SELECT rr.LIBRARY_RELEASE_ID, c.NAME as label_name,
+           ROW_NUMBER() OVER (PARTITION BY rr.LIBRARY_RELEASE_ID ORDER BY rr.ROTATION_ADD_DATE DESC) as rn
+    FROM ROTATION_RELEASE rr
+    JOIN COMPANY c ON rr.COMPANY_ID = c.ID
+    WHERE rr.LIBRARY_RELEASE_ID IS NOT NULL AND rr.LIBRARY_RELEASE_ID > 0
+) label_sub ON label_sub.LIBRARY_RELEASE_ID = r.ID AND label_sub.rn = 1
 """
 
 
@@ -132,6 +139,7 @@ def fetch_from_remote() -> list[dict]:
         "genre",
         "format",
         "alternate_artist_name",
+        "label",
     ]
 
     for line in output.strip().split("\n"):
@@ -247,7 +255,8 @@ def _do_export(rows: list[dict]):
             release_call_number INTEGER,
             genre TEXT,
             format TEXT,
-            alternate_artist_name TEXT
+            alternate_artist_name TEXT,
+            label TEXT
         )
     """)
 
@@ -268,8 +277,8 @@ def _do_export(rows: list[dict]):
     for row in rows:
         sqlite_cur.execute(
             """
-            INSERT INTO library (id, title, artist, call_letters, artist_call_number, release_call_number, genre, format, alternate_artist_name)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO library (id, title, artist, call_letters, artist_call_number, release_call_number, genre, format, alternate_artist_name, label)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"],
@@ -281,6 +290,7 @@ def _do_export(rows: list[dict]):
                 row["genre"],
                 row["format"],
                 row.get("alternate_artist_name"),
+                row.get("label"),
             ),
         )
 

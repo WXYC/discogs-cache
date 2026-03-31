@@ -25,7 +25,7 @@ class CatalogSource(Protocol):
 
     def fetch_library_rows(self) -> list[dict[str, Any]]:
         """Return library rows. Keys: id, title, artist, call_letters,
-        artist_call_number, release_call_number, genre, format, alternate_artist_name."""
+        artist_call_number, release_call_number, genre, format, alternate_artist_name, label."""
         ...
 
     def fetch_alternate_names(self) -> set[str]:
@@ -89,17 +89,26 @@ class TubafrenzySource:
             "genre",
             "format",
             "alternate_artist_name",
+            "label",
         ]
         with self._conn.cursor() as cur:
             cur.execute("""
                 SELECT
                     r.ID, r.TITLE, lc.PRESENTATION_NAME, lc.CALL_LETTERS,
                     lc.CALL_NUMBERS, r.CALL_NUMBERS, g.REFERENCE_NAME,
-                    f.REFERENCE_NAME, r.ALTERNATE_ARTIST_NAME
+                    f.REFERENCE_NAME, r.ALTERNATE_ARTIST_NAME,
+                    label_sub.label_name
                 FROM LIBRARY_RELEASE r
                 JOIN LIBRARY_CODE lc ON r.LIBRARY_CODE_ID = lc.ID
                 JOIN FORMAT f ON r.FORMAT_ID = f.ID
                 JOIN GENRE g ON lc.GENRE_ID = g.ID
+                LEFT JOIN (
+                    SELECT rr.LIBRARY_RELEASE_ID, c.NAME as label_name,
+                           ROW_NUMBER() OVER (PARTITION BY rr.LIBRARY_RELEASE_ID ORDER BY rr.ROTATION_ADD_DATE DESC) as rn
+                    FROM ROTATION_RELEASE rr
+                    JOIN COMPANY c ON rr.COMPANY_ID = c.ID
+                    WHERE rr.LIBRARY_RELEASE_ID IS NOT NULL AND rr.LIBRARY_RELEASE_ID > 0
+                ) label_sub ON label_sub.LIBRARY_RELEASE_ID = r.ID AND label_sub.rn = 1
             """)
             rows = cur.fetchall()
         return [dict(zip(columns, row, strict=True)) for row in rows]
@@ -175,7 +184,8 @@ class BackendServiceSource:
                     gac.artist_genre_code AS artist_call_number,
                     l.code_number AS release_call_number,
                     g.genre_name AS genre, f.format_name AS format,
-                    l.alternate_artist_name
+                    l.alternate_artist_name,
+                    NULL AS label
                 FROM wxyc_schema.library l
                 JOIN wxyc_schema.artists a ON l.artist_id = a.id
                 JOIN wxyc_schema.format f ON l.format_id = f.id
