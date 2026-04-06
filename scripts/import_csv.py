@@ -651,6 +651,31 @@ def import_artist_details(conn, csv_dir: Path) -> int:
 
     total = count
 
+    # Update artist profiles from artist.csv (if present)
+    artist_csv = csv_dir / "artist.csv"
+    if artist_csv.exists():
+        logger.info("Updating artist profiles from artist.csv...")
+        import csv as csv_mod
+
+        profile_count = 0
+        with open(artist_csv, newline="", encoding="utf-8") as f:
+            reader = csv_mod.DictReader(f)
+            with conn.cursor() as cur:
+                for row in reader:
+                    artist_id = row.get("artist_id")
+                    profile = row.get("profile", "").strip()
+                    if artist_id and profile:
+                        cur.execute(
+                            "UPDATE artist SET profile = %s WHERE id = %s",
+                            (profile, int(artist_id)),
+                        )
+                        profile_count += cur.rowcount
+        conn.commit()
+        logger.info(f"  Updated {profile_count:,} artist profiles")
+        total += profile_count
+    else:
+        logger.info("No artist.csv found, skipping profile import")
+
     # Query known artist IDs for filtering artist_alias and artist_member
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM artist")
