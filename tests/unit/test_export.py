@@ -286,7 +286,9 @@ class TestDoExportCompilationTrackArtists:
         _do_export(self._make_rows(), self._make_track_artists())
 
         conn = sqlite3.connect(self.output_path)
-        cursor = conn.execute("SELECT library_release_id, artist_name, track_title FROM compilation_track_artist ORDER BY artist_name")
+        cursor = conn.execute(
+            "SELECT library_release_id, artist_name, track_title FROM compilation_track_artist ORDER BY artist_name"
+        )
         rows = cursor.fetchall()
         conn.close()
 
@@ -299,7 +301,9 @@ class TestDoExportCompilationTrackArtists:
         _do_export(self._make_rows(), self._make_track_artists())
 
         conn = sqlite3.connect(self.output_path)
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_cta_%'")
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_cta_%'"
+        )
         indexes = {row[0] for row in cursor.fetchall()}
         conn.close()
 

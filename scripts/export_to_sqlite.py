@@ -362,11 +362,17 @@ def _do_export(rows: list[dict], compilation_track_artists: list[dict] | None = 
                 "INSERT INTO compilation_track_artist (library_release_id, artist_name, track_title) VALUES (?, ?, ?)",
                 (row["library_release_id"], row["artist_name"], row.get("track_title")),
             )
-        sqlite_cur.execute("CREATE INDEX idx_cta_release ON compilation_track_artist(library_release_id)")
+        sqlite_cur.execute(
+            "CREATE INDEX idx_cta_release ON compilation_track_artist(library_release_id)"
+        )
         sqlite_cur.execute("CREATE INDEX idx_cta_artist ON compilation_track_artist(artist_name)")
 
-        cta_count = sqlite_cur.execute("SELECT COUNT(*) FROM compilation_track_artist").fetchone()[0]
-        cta_releases = sqlite_cur.execute("SELECT COUNT(DISTINCT library_release_id) FROM compilation_track_artist").fetchone()[0]
+        cta_count = sqlite_cur.execute("SELECT COUNT(*) FROM compilation_track_artist").fetchone()[
+            0
+        ]
+        cta_releases = sqlite_cur.execute(
+            "SELECT COUNT(DISTINCT library_release_id) FROM compilation_track_artist"
+        ).fetchone()[0]
         print(f"Exported {cta_count} compilation track artists across {cta_releases} releases")
 
     sqlite_conn.commit()

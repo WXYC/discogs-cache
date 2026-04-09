@@ -213,8 +213,16 @@ class TestTubafrenzySourceFetchCompilationTrackArtists:
         rows = source.fetch_compilation_track_artists()
 
         assert len(rows) == 2
-        assert rows[0] == {"library_release_id": 1, "artist_name": "Koo Nimo", "track_title": "odo akosomo"}
-        assert rows[1] == {"library_release_id": 1, "artist_name": "T.O. Jazz", "track_title": "Yaa Amponsah"}
+        assert rows[0] == {
+            "library_release_id": 1,
+            "artist_name": "Koo Nimo",
+            "track_title": "odo akosomo",
+        }
+        assert rows[1] == {
+            "library_release_id": 1,
+            "artist_name": "T.O. Jazz",
+            "track_title": "Yaa Amponsah",
+        }
 
     @patch("lib.catalog_source.connect_mysql")
     def test_returns_empty_list_when_table_missing(self, mock_connect) -> None:
