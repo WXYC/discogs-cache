@@ -1042,3 +1042,205 @@ class TestFormatAwareDedup:
         # Release 5 (UK, NULL format) should be deleted — groups with release 4 (US, NULL format)
         assert 5 in deleted
         assert 4 not in deleted
+
+
+class TestDedupCopySwapAbortCleanup:
+    """Verify that abandoned temp tables from a failed copy-swap are cleaned up.
+
+    Simulates a scenario where a previous dedup run created new_* tables
+    (the copy phase) but crashed before completing the swap. On the next run,
+    copy_table() drops any pre-existing new_* table before recreating it.
+    """
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _set_up(self, db_url):
+        self.__class__._db_url = db_url
+        conn = psycopg.connect(db_url, autocommit=True)
+        _drop_all_tables(conn)
+        with conn.cursor() as cur:
+            cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            # Two releases with same master_id — triggers dedup
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, country) "
+                "VALUES (1, 'DOGA', 100, 'AR')"
+            )
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, country) "
+                "VALUES (2, 'DOGA', 100, 'US')"
+            )
+            cur.execute(
+                "INSERT INTO release_artist (release_id, artist_name) "
+                "VALUES (1, 'Juana Molina')"
+            )
+            cur.execute(
+                "INSERT INTO release_artist (release_id, artist_name) "
+                "VALUES (2, 'Juana Molina')"
+            )
+            cur.execute(
+                "INSERT INTO cache_metadata (release_id, source) "
+                "VALUES (1, 'bulk_import')"
+            )
+            cur.execute(
+                "INSERT INTO cache_metadata (release_id, source) "
+                "VALUES (2, 'bulk_import')"
+            )
+            # Track counts for ranking
+            cur.execute("""
+                CREATE UNLOGGED TABLE release_track_count (
+                    release_id integer PRIMARY KEY,
+                    track_count integer NOT NULL
+                )
+            """)
+            cur.execute("INSERT INTO release_track_count VALUES (1, 3), (2, 5)")
+            # Simulate a previous failed run: leave a dangling new_release table
+            cur.execute(
+                "CREATE TABLE new_release AS SELECT * FROM release WHERE false"
+            )
+            cur.execute(
+                "INSERT INTO new_release (id, title, master_id, country) "
+                "VALUES (999, 'Stale Ghost Row', 999, 'XX')"
+            )
+        conn.close()
+
+    @pytest.fixture(autouse=True)
+    def _store_url(self):
+        self.db_url = self.__class__._db_url
+
+    def _connect(self):
+        return psycopg.connect(self.db_url)
+
+    def test_dangling_new_table_exists_before_dedup(self) -> None:
+        """Precondition: new_release from a failed previous run exists."""
+        conn = self._connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM information_schema.tables "
+                "  WHERE table_name = 'new_release'"
+                ")"
+            )
+            exists = cur.fetchone()[0]
+        conn.close()
+        assert exists, "new_release should exist as a leftover from a failed run"
+
+    def test_copy_table_replaces_dangling_table(self) -> None:
+        """copy_table() drops the stale new_release and creates a fresh one.
+
+        This verifies that copy_table's `DROP TABLE IF EXISTS new_table`
+        handles cleanup of abandoned temp tables from prior failed runs.
+        """
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        ensure_dedup_ids(conn)
+
+        # copy_table drops the stale new_release and creates a fresh one
+        count = copy_table(
+            conn,
+            "release",
+            "new_release",
+            "id, title, release_year, country, artwork_url, released, format",
+            "id",
+        )
+
+        # The stale ghost row (id=999) should be gone — new_release is rebuilt
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM new_release WHERE id = 999")
+            ghost_count = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM new_release")
+            total = cur.fetchone()[0]
+        conn.close()
+
+        assert ghost_count == 0, "Stale ghost row should not survive copy_table"
+        assert total == count
+        # Only the US release (id=2) survives dedup (US preference)
+        assert count == 1
+
+    def test_full_dedup_succeeds_despite_dangling_tables(self) -> None:
+        """A complete dedup cycle succeeds even with leftover new_* tables.
+
+        Re-runs the full dedup pipeline from scratch, verifying it handles
+        cleanup of any leftover artifacts from the prior test methods.
+        """
+        # Re-create a clean state with dedup-worthy data
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        _drop_all_tables(conn)
+        # Also drop any leftover new_* tables from the prior test method
+        with conn.cursor() as cur:
+            for table in ALL_TABLES:
+                cur.execute(f"DROP TABLE IF EXISTS new_{table} CASCADE")
+        with conn.cursor() as cur:
+            cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+            cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, country) "
+                "VALUES (1, 'Aluminum Tunes', 100, 'UK')"
+            )
+            cur.execute(
+                "INSERT INTO release (id, title, master_id, country) "
+                "VALUES (2, 'Aluminum Tunes', 100, 'US')"
+            )
+            cur.execute(
+                "INSERT INTO release_artist (release_id, artist_name) "
+                "VALUES (1, 'Stereolab')"
+            )
+            cur.execute(
+                "INSERT INTO release_artist (release_id, artist_name) "
+                "VALUES (2, 'Stereolab')"
+            )
+            cur.execute(
+                "INSERT INTO release_label (release_id, label_name) "
+                "VALUES (1, 'Duophonic')"
+            )
+            cur.execute(
+                "INSERT INTO release_label (release_id, label_name) "
+                "VALUES (2, 'Duophonic')"
+            )
+            cur.execute(
+                "INSERT INTO cache_metadata (release_id, source) "
+                "VALUES (1, 'bulk_import')"
+            )
+            cur.execute(
+                "INSERT INTO cache_metadata (release_id, source) "
+                "VALUES (2, 'bulk_import')"
+            )
+            cur.execute("""
+                CREATE UNLOGGED TABLE release_track_count (
+                    release_id integer PRIMARY KEY,
+                    track_count integer NOT NULL
+                )
+            """)
+            cur.execute("INSERT INTO release_track_count VALUES (1, 5), (2, 3)")
+            # Leave a dangling new_release from a "crashed" previous run
+            cur.execute(
+                "CREATE TABLE new_release (id integer, title text)"
+            )
+            cur.execute("INSERT INTO new_release VALUES (999, 'Ghost')")
+        conn.close()
+
+        # Run the full dedup pipeline
+        _run_dedup(self.db_url)
+
+        # Verify the final state
+        conn = psycopg.connect(self.db_url)
+        with conn.cursor() as cur:
+            # Only US release survives
+            cur.execute("SELECT id FROM release ORDER BY id")
+            ids = [row[0] for row in cur.fetchall()]
+            # No dangling new_* or *_old tables
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_name LIKE 'new_%' OR table_name LIKE '%_old'"
+            )
+            dangling = [row[0] for row in cur.fetchall()]
+            # dedup_delete_ids should be cleaned up
+            cur.execute(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM information_schema.tables "
+                "  WHERE table_name = 'dedup_delete_ids'"
+                ")"
+            )
+            dedup_exists = cur.fetchone()[0]
+        conn.close()
+
+        assert ids == [2], f"Only US release should survive dedup, got {ids}"
+        assert dangling == [], f"No dangling temp tables should remain: {dangling}"
+        assert not dedup_exists, "dedup_delete_ids should be cleaned up"
