@@ -305,10 +305,12 @@ class TestProcessPoolExecutorTimeout:
 
         futures = {}
         futures[executor.submit(_fast_classify_chunk, (fast_artists, fast_by_artist))] = "fast"
-        futures[executor.submit(
-            _slow_classify_chunk,
-            (["slow"], {"slow": [(999, "X", "Y")]}),
-        )] = "slow"
+        futures[
+            executor.submit(
+                _slow_classify_chunk,
+                (["slow"], {"slow": [(999, "X", "Y")]}),
+            )
+        ] = "slow"
 
         collected_prune = set()
         timed_out_chunks = []
@@ -352,9 +354,7 @@ class TestProcessPoolExecutorTimeout:
             ]
         }
 
-        keep, prune, review, review_by = classify_fuzzy_batch(
-            artists, by_artist, index, matcher
-        )
+        keep, prune, review, review_by = classify_fuzzy_batch(artists, by_artist, index, matcher)
         assert 5001 in keep, "Exact match should be KEEP"
 
     def test_classify_fuzzy_batch_prunes_unknown(self) -> None:
@@ -369,8 +369,6 @@ class TestProcessPoolExecutorTimeout:
             ]
         }
 
-        keep, prune, review, review_by = classify_fuzzy_batch(
-            artists, by_artist, index, matcher
-        )
+        keep, prune, review, review_by = classify_fuzzy_batch(artists, by_artist, index, matcher)
         assert 9999 in prune, "Unknown artist should be PRUNE"
         assert 9999 not in keep

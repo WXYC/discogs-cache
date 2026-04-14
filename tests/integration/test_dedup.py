@@ -1061,29 +1061,19 @@ class TestDedupCopySwapAbortCleanup:
             cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
             # Two releases with same master_id — triggers dedup
             cur.execute(
-                "INSERT INTO release (id, title, master_id, country) "
-                "VALUES (1, 'DOGA', 100, 'AR')"
+                "INSERT INTO release (id, title, master_id, country) VALUES (1, 'DOGA', 100, 'AR')"
             )
             cur.execute(
-                "INSERT INTO release (id, title, master_id, country) "
-                "VALUES (2, 'DOGA', 100, 'US')"
+                "INSERT INTO release (id, title, master_id, country) VALUES (2, 'DOGA', 100, 'US')"
             )
             cur.execute(
-                "INSERT INTO release_artist (release_id, artist_name) "
-                "VALUES (1, 'Juana Molina')"
+                "INSERT INTO release_artist (release_id, artist_name) VALUES (1, 'Juana Molina')"
             )
             cur.execute(
-                "INSERT INTO release_artist (release_id, artist_name) "
-                "VALUES (2, 'Juana Molina')"
+                "INSERT INTO release_artist (release_id, artist_name) VALUES (2, 'Juana Molina')"
             )
-            cur.execute(
-                "INSERT INTO cache_metadata (release_id, source) "
-                "VALUES (1, 'bulk_import')"
-            )
-            cur.execute(
-                "INSERT INTO cache_metadata (release_id, source) "
-                "VALUES (2, 'bulk_import')"
-            )
+            cur.execute("INSERT INTO cache_metadata (release_id, source) VALUES (1, 'bulk_import')")
+            cur.execute("INSERT INTO cache_metadata (release_id, source) VALUES (2, 'bulk_import')")
             # Track counts for ranking
             cur.execute("""
                 CREATE UNLOGGED TABLE release_track_count (
@@ -1093,9 +1083,7 @@ class TestDedupCopySwapAbortCleanup:
             """)
             cur.execute("INSERT INTO release_track_count VALUES (1, 3), (2, 5)")
             # Simulate a previous failed run: leave a dangling new_release table
-            cur.execute(
-                "CREATE TABLE new_release AS SELECT * FROM release WHERE false"
-            )
+            cur.execute("CREATE TABLE new_release AS SELECT * FROM release WHERE false")
             cur.execute(
                 "INSERT INTO new_release (id, title, master_id, country) "
                 "VALUES (999, 'Stale Ghost Row', 999, 'XX')"
@@ -1179,29 +1167,19 @@ class TestDedupCopySwapAbortCleanup:
                 "VALUES (2, 'Aluminum Tunes', 100, 'US')"
             )
             cur.execute(
-                "INSERT INTO release_artist (release_id, artist_name) "
-                "VALUES (1, 'Stereolab')"
+                "INSERT INTO release_artist (release_id, artist_name) VALUES (1, 'Stereolab')"
             )
             cur.execute(
-                "INSERT INTO release_artist (release_id, artist_name) "
-                "VALUES (2, 'Stereolab')"
+                "INSERT INTO release_artist (release_id, artist_name) VALUES (2, 'Stereolab')"
             )
             cur.execute(
-                "INSERT INTO release_label (release_id, label_name) "
-                "VALUES (1, 'Duophonic')"
+                "INSERT INTO release_label (release_id, label_name) VALUES (1, 'Duophonic')"
             )
             cur.execute(
-                "INSERT INTO release_label (release_id, label_name) "
-                "VALUES (2, 'Duophonic')"
+                "INSERT INTO release_label (release_id, label_name) VALUES (2, 'Duophonic')"
             )
-            cur.execute(
-                "INSERT INTO cache_metadata (release_id, source) "
-                "VALUES (1, 'bulk_import')"
-            )
-            cur.execute(
-                "INSERT INTO cache_metadata (release_id, source) "
-                "VALUES (2, 'bulk_import')"
-            )
+            cur.execute("INSERT INTO cache_metadata (release_id, source) VALUES (1, 'bulk_import')")
+            cur.execute("INSERT INTO cache_metadata (release_id, source) VALUES (2, 'bulk_import')")
             cur.execute("""
                 CREATE UNLOGGED TABLE release_track_count (
                     release_id integer PRIMARY KEY,
@@ -1210,9 +1188,7 @@ class TestDedupCopySwapAbortCleanup:
             """)
             cur.execute("INSERT INTO release_track_count VALUES (1, 5), (2, 3)")
             # Leave a dangling new_release from a "crashed" previous run
-            cur.execute(
-                "CREATE TABLE new_release (id integer, title text)"
-            )
+            cur.execute("CREATE TABLE new_release (id integer, title text)")
             cur.execute("INSERT INTO new_release VALUES (999, 'Ghost')")
         conn.close()
 

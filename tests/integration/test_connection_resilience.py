@@ -106,9 +106,7 @@ class TestCopyConnectionLoss:
         with open(large_csv, "w") as f:
             f.write(header)
             for i in range(500_000):
-                f.write(
-                    f"{i},Accepted,DOGA Pressing {i},AR,2024-05-10,,Correct,{8000 + i},LP\n"
-                )
+                f.write(f"{i},Accepted,DOGA Pressing {i},AR,2024-05-10,,Correct,{8000 + i},LP\n")
 
         import_conn = psycopg.connect(self.db_url)
         import_pid = import_conn.info.backend_pid
@@ -127,9 +125,7 @@ class TestCopyConnectionLoss:
                     )
                     row = cur.fetchone()
                     if row and row[0] and "COPY" in row[0].upper():
-                        cur.execute(
-                            "SELECT pg_terminate_backend(%s)", (import_pid,)
-                        )
+                        cur.execute("SELECT pg_terminate_backend(%s)", (import_pid,))
                         terminated.set()
                         admin_conn.close()
                         return
