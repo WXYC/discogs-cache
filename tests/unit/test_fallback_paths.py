@@ -17,9 +17,14 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
+
+# Ensure lib/ is importable (matches verify_cache.py's own sys.path setup)
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from lib.matching import is_compilation_artist  # noqa: E402
+from lib.pipeline_state import STEP_NAMES, PipelineState  # noqa: E402
 
 # Load verify_cache module from scripts directory
 _SCRIPT_PATH = Path(__file__).parent.parent.parent / "scripts" / "verify_cache.py"
@@ -35,9 +40,6 @@ Decision = _vc.Decision
 normalize_artist = _vc.normalize_artist
 normalize_title = _vc.normalize_title
 classify_compilation = _vc.classify_compilation
-
-from lib.matching import is_compilation_artist
-from lib.pipeline_state import PipelineState, STEP_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -95,10 +97,7 @@ class TestVerifyCacheFallbackClassifications:
     @pytest.mark.parametrize(
         "artist, title, expected_decision",
         DISCOGS_RELEASES_EXPECTED,
-        ids=[
-            f"{a}-{t[:20]}"
-            for a, t, _ in DISCOGS_RELEASES_EXPECTED
-        ],
+        ids=[f"{a}-{t[:20]}" for a, t, _ in DISCOGS_RELEASES_EXPECTED],
     )
     def test_classification_matches_expected(
         self,
@@ -252,7 +251,14 @@ class TestPipelineStateV1Resume:
         """Create a v1 state file with the given completed steps."""
         v1_steps = {
             name: {"status": "pending"}
-            for name in ["create_schema", "import_csv", "create_indexes", "dedup", "prune", "vacuum"]
+            for name in [
+                "create_schema",
+                "import_csv",
+                "create_indexes",
+                "dedup",
+                "prune",
+                "vacuum",
+            ]
         }
         for step in completed:
             v1_steps[step] = {"status": "completed"}
@@ -271,9 +277,7 @@ class TestPipelineStateV1Resume:
 
         import_csv in v1 included tracks, so import_tracks should also be completed.
         """
-        state_file = self._make_v1_state(
-            tmp_path, ["create_schema", "import_csv"]
-        )
+        state_file = self._make_v1_state(tmp_path, ["create_schema", "import_csv"])
         state = PipelineState.load(state_file)
 
         assert state.is_completed("create_schema")
@@ -329,8 +333,14 @@ class TestPipelineStateV2Resume:
         v2_steps = {
             name: {"status": "pending"}
             for name in [
-                "create_schema", "import_csv", "create_indexes", "dedup",
-                "import_tracks", "create_track_indexes", "prune", "vacuum",
+                "create_schema",
+                "import_csv",
+                "create_indexes",
+                "dedup",
+                "import_tracks",
+                "create_track_indexes",
+                "prune",
+                "vacuum",
             ]
         }
         for step in completed:
@@ -349,8 +359,16 @@ class TestPipelineStateV2Resume:
         """V2 with vacuum completed -> set_logged inferred as completed."""
         state_file = self._make_v2_state(
             tmp_path,
-            ["create_schema", "import_csv", "create_indexes", "dedup",
-             "import_tracks", "create_track_indexes", "prune", "vacuum"],
+            [
+                "create_schema",
+                "import_csv",
+                "create_indexes",
+                "dedup",
+                "import_tracks",
+                "create_track_indexes",
+                "prune",
+                "vacuum",
+            ],
         )
         state = PipelineState.load(state_file)
         assert state.is_completed("set_logged")
@@ -359,8 +377,15 @@ class TestPipelineStateV2Resume:
         """V2 with vacuum not completed -> set_logged is pending."""
         state_file = self._make_v2_state(
             tmp_path,
-            ["create_schema", "import_csv", "create_indexes", "dedup",
-             "import_tracks", "create_track_indexes", "prune"],
+            [
+                "create_schema",
+                "import_csv",
+                "create_indexes",
+                "dedup",
+                "import_tracks",
+                "create_track_indexes",
+                "prune",
+            ],
         )
         state = PipelineState.load(state_file)
         assert not state.is_completed("set_logged")
@@ -370,8 +395,14 @@ class TestPipelineStateV2Resume:
         v2_steps = {
             name: {"status": "pending"}
             for name in [
-                "create_schema", "import_csv", "create_indexes", "dedup",
-                "import_tracks", "create_track_indexes", "prune", "vacuum",
+                "create_schema",
+                "import_csv",
+                "create_indexes",
+                "dedup",
+                "import_tracks",
+                "create_track_indexes",
+                "prune",
+                "vacuum",
             ]
         }
         v2_steps["create_schema"] = {"status": "completed"}
@@ -399,11 +430,15 @@ class TestPipelineStateFutureVersionRejected:
 
     def test_version_99_raises(self, tmp_path: Path) -> None:
         state_file = tmp_path / "state.json"
-        state_file.write_text(json.dumps({
-            "version": 99,
-            "database_url": "postgresql://localhost:5433/test",
-            "csv_dir": "/tmp/csv",
-            "steps": {},
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "version": 99,
+                    "database_url": "postgresql://localhost:5433/test",
+                    "csv_dir": "/tmp/csv",
+                    "steps": {},
+                }
+            )
+        )
         with pytest.raises(ValueError, match="version 99"):
             PipelineState.load(state_file)
