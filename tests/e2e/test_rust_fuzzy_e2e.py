@@ -168,9 +168,7 @@ class TestVerifyCacheFuzzy:
     def test_keep_count_positive(self) -> None:
         """At least some releases are classified as KEEP."""
         counts = self._parse_classification_counts()
-        assert "keep" in counts, (
-            f"Could not parse KEEP count from stdout:\n{self.verify_stdout}"
-        )
+        assert "keep" in counts, f"Could not parse KEEP count from stdout:\n{self.verify_stdout}"
         assert counts["keep"] > 0, "Expected some KEEP releases"
 
     def test_prune_count_positive(self) -> None:
@@ -181,17 +179,13 @@ class TestVerifyCacheFuzzy:
         match any library entry.
         """
         counts = self._parse_classification_counts()
-        assert "prune" in counts, (
-            f"Could not parse PRUNE count from stdout:\n{self.verify_stdout}"
-        )
+        assert "prune" in counts, f"Could not parse PRUNE count from stdout:\n{self.verify_stdout}"
         assert counts["prune"] > 0, "Expected some PRUNE releases"
 
     def test_keep_prune_total_matches_release_count(self) -> None:
         """KEEP + PRUNE + REVIEW equals total release count in the database."""
         counts = self._parse_classification_counts()
-        total_classified = (
-            counts.get("keep", 0) + counts.get("prune", 0) + counts.get("review", 0)
-        )
+        total_classified = counts.get("keep", 0) + counts.get("prune", 0) + counts.get("review", 0)
 
         conn = psycopg.connect(self.db_url)
         with conn.cursor() as cur:
@@ -244,8 +238,7 @@ class TestVerifyCacheFuzzy:
             or "Classification complete" in combined
         )
         assert has_classification_log, (
-            "Expected classification phase logs in output.\n"
-            f"stderr:\n{self.verify_stderr[:500]}"
+            f"Expected classification phase logs in output.\nstderr:\n{self.verify_stderr[:500]}"
         )
 
     def test_database_unchanged_in_dry_run(self) -> None:
