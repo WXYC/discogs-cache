@@ -66,6 +66,27 @@ def _get_table_persistence(db_url: str, table_name: str) -> str | None:
     return result[0]
 
 
+def _drop_all_tables(db_url: str) -> None:
+    """Drop all pipeline tables with CASCADE."""
+    conn = psycopg.connect(db_url, autocommit=True)
+    with conn.cursor() as cur:
+        for table in [
+            "cache_metadata",
+            "release_track_artist",
+            "release_track",
+            "release_label",
+            "release_artist",
+            "release",
+            "artist_url",
+            "artist_member",
+            "artist_name_variation",
+            "artist_alias",
+            "artist",
+        ]:
+            cur.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+    conn.close()
+
+
 def _apply_schema(db_url: str) -> None:
     """Apply the pipeline schema to a test database."""
     conn = psycopg.connect(db_url, autocommit=True)
@@ -158,6 +179,9 @@ class TestUnloggedEdgeCases:
 
     def test_unlogged_partial_schema_fails_gracefully(self) -> None:
         """set_tables_unlogged fails if only some tables exist."""
+        # Drop everything first since module-scoped db may have leftover tables
+        _drop_all_tables(self.db_url)
+
         conn = psycopg.connect(self.db_url, autocommit=True)
         with conn.cursor() as cur:
             # Create only the release table, not child tables
@@ -225,11 +249,12 @@ class TestDedupConnectionLoss:
         conn.close()
         assert count == 6
 
-    def test_copy_table_to_nonexistent_target_fails(self) -> None:
-        """copy_table to a non-existent target connection fails with clear error."""
-        bad_url = "postgresql://bogus_user:bad_pass@localhost:59999/nonexistent"
+    def test_swap_tables_nonexistent_source_fails(self) -> None:
+        """swap_tables with non-existent source table fails with clear error."""
+        conn = psycopg.connect(self.db_url, autocommit=True)
         with pytest.raises((psycopg.Error, RuntimeError, OSError)):
-            dedup_releases.copy_table(self.db_url, bad_url, "release", "SELECT * FROM release")
+            dedup_releases.swap_tables(conn, "_nonexistent_src", "release")
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +394,7 @@ class TestVacuumEdgeCases:
 
     def test_vacuum_nonexistent_tables_fails(self) -> None:
         """VACUUM FULL on non-existent tables raises an error."""
-        # Don't apply schema, so tables don't exist
+        # Explicitly drop all tables (module-scoped db may have leftovers)
+        _drop_all_tables(self.db_url)
         with pytest.raises((psycopg.Error, RuntimeError, OSError)):
             run_pipeline.run_vacuum(self.db_url)
