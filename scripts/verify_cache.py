@@ -1588,6 +1588,12 @@ def classify_all_releases(
 
         artists_fuzzy_matched = len(truly_fuzzy)
         releases_processed += len(flat_ids)
+        phase4_elapsed = time.monotonic() - phase4_start
+        logger.info(
+            f"  Rust batch classification done in {phase4_elapsed:.1f}s "
+            f"({len(flat_ids):,} releases, {len(truly_fuzzy):,} artists) "
+            f"| KEEP={len(keep_ids):,} PRUNE={len(prune_ids):,} REVIEW={len(review_ids):,}"
+        )
     else:
         # Python fallback: ProcessPoolExecutor with fork context.
         # The Python loop overhead between rapidfuzz extractOne calls holds the
