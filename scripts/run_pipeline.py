@@ -111,10 +111,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--generate-library-db",
         action="store_true",
         default=False,
-        help="Generate library.db from the WXYC MySQL catalog via SSH before "
-        "running the pipeline. Requires LIBRARY_SSH_HOST, LIBRARY_SSH_USER, "
-        "LIBRARY_DB_HOST, LIBRARY_DB_USER, LIBRARY_DB_PASSWORD, and "
-        "LIBRARY_DB_NAME environment variables. Conflicts with --library-db.",
+        help="Generate library.db from the WXYC catalog before running the pipeline. "
+        "Requires --catalog-source and --catalog-db-url (or --wxyc-db-url). "
+        "Uses wxyc-export-to-sqlite from the wxyc-catalog package. "
+        "Conflicts with --library-db.",
     )
     parser.add_argument(
         "--wxyc-db-url",
@@ -225,6 +225,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if args.generate_library_db and args.library_db:
         parser.error("--generate-library-db and --library-db are mutually exclusive")
+    if args.generate_library_db and not args.catalog_source:
+        parser.error(
+            "--generate-library-db requires --catalog-source and --catalog-db-url "
+            "(or --wxyc-db-url)"
+        )
 
     if args.catalog_source and not args.catalog_db_url:
         parser.error("--catalog-source requires --catalog-db-url")
@@ -472,8 +477,7 @@ def enrich_library_artists(
 ) -> None:
     """Step 2.5: Enrich library_artists.txt with WXYC cross-reference data."""
     cmd = [
-        sys.executable,
-        str(SCRIPT_DIR / "enrich_library_artists.py"),
+        "wxyc-enrich-library-artists",
         "--library-db",
         str(library_db),
         "--output",
@@ -517,12 +521,23 @@ def _load_or_create_state(args: argparse.Namespace) -> PipelineState:
     return PipelineState(db_url=args.database_url, csv_dir=csv_dir_str)
 
 
-def generate_library_db(output_path: Path) -> None:
-    """Step 0: Generate library.db from WXYC MySQL catalog via SSH."""
+def generate_library_db(
+    output_path: Path,
+    catalog_source: str,
+    catalog_db_url: str,
+) -> None:
+    """Step 0: Generate library.db from WXYC catalog via wxyc-catalog CLI."""
     run_step(
-        "Generate library.db from MySQL",
-        [sys.executable, str(SCRIPT_DIR / "export_to_sqlite.py")],
-        env={**os.environ, "LIBRARY_DB_OUTPUT_PATH": str(output_path)},
+        "Generate library.db",
+        [
+            "wxyc-export-to-sqlite",
+            "--catalog-source",
+            catalog_source,
+            "--catalog-db-url",
+            catalog_db_url,
+            "--output",
+            str(output_path),
+        ],
     )
 
 
@@ -652,7 +667,7 @@ def main() -> None:
     # Generate library.db if requested
     if args.generate_library_db:
         generated_db = Path(tempfile.mkdtemp(prefix="discogs_library_")) / "library.db"
-        generate_library_db(generated_db)
+        generate_library_db(generated_db, args.catalog_source, args.catalog_db_url)
         args.library_db = generated_db
 
     # Validate paths
@@ -742,8 +757,7 @@ def _run_database_build_post_import(
         run_step(
             "Extract WXYC library labels",
             [
-                python,
-                str(SCRIPT_DIR / "extract_library_labels.py"),
+                "wxyc-extract-library-labels",
                 "--catalog-source",
                 catalog_source,
                 "--catalog-db-url",

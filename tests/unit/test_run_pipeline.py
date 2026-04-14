@@ -945,3 +945,14 @@ class TestParseArgsValidation:
                     "/tmp/library.db",
                 ]
             )
+
+    def test_generate_library_db_without_catalog_source_exits(self) -> None:
+        """--generate-library-db requires --catalog-source (or --wxyc-db-url)."""
+        with pytest.raises(SystemExit):
+            run_pipeline.parse_args(
+                [
+                    "--csv-dir",
+                    "/tmp/csv",
+                    "--generate-library-db",
+                ]
+            )
