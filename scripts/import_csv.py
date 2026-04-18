@@ -169,6 +169,27 @@ ARTIST_TABLES: list[TableConfig] = [
     },
 ]
 
+MASTER_TABLES: list[TableConfig] = [
+    {
+        "csv_file": "master.csv",
+        "table": "master",
+        "csv_columns": ["id", "title", "main_release_id", "year"],
+        "db_columns": ["id", "title", "main_release_id", "year"],
+        "required": ["id", "title"],
+        "transforms": {},
+        "unique_key": ["id"],
+    },
+    {
+        "csv_file": "master_artist.csv",
+        "table": "master_artist",
+        "csv_columns": ["master_id", "artist_id", "artist_name"],
+        "db_columns": ["master_id", "artist_id", "artist_name"],
+        "required": ["master_id", "artist_name"],
+        "transforms": {},
+        "unique_key": ["master_id", "artist_id"],
+    },
+]
+
 TABLES: list[TableConfig] = BASE_TABLES + TRACK_TABLES + VIDEO_TABLES
 
 
@@ -623,6 +644,15 @@ def import_artist_details(conn, csv_dir: Path) -> int:
     return total
 
 
+def import_masters(conn, csv_dir: Path) -> int:
+    """Import master tables from CSV.
+
+    Imports master.csv first (parent), then master_artist.csv (child).
+    Returns total rows imported.
+    """
+    return _import_tables(conn, csv_dir, MASTER_TABLES)
+
+
 def main():
     import argparse
 
@@ -694,6 +724,9 @@ def main():
         logger.info("Importing artist details...")
         import_artist_details(conn, csv_dir)
         logger.info("Artist details complete")
+        logger.info("Importing masters...")
+        import_masters(conn, csv_dir)
+        logger.info("Masters complete")
         conn.close()
     else:
         total = _import_tables(conn, csv_dir, TABLES)
@@ -707,6 +740,9 @@ def main():
         logger.info("Importing artist details...")
         import_artist_details(conn, csv_dir)
         logger.info("Artist details complete")
+        logger.info("Importing masters...")
+        import_masters(conn, csv_dir)
+        logger.info("Masters complete")
         conn.close()
 
     logger.info(f"Total: {total:,} rows imported")
