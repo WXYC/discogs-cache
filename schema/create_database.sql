@@ -22,6 +22,8 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 
 -- Drop in FK order: children first, then parent
 DROP TABLE IF EXISTS cache_metadata CASCADE;
+DROP TABLE IF EXISTS master_artist CASCADE;
+DROP TABLE IF EXISTS master CASCADE;
 DROP TABLE IF EXISTS artist_url CASCADE;
 DROP TABLE IF EXISTS artist_member CASCADE;
 DROP TABLE IF EXISTS artist_name_variation CASCADE;
@@ -125,6 +127,23 @@ CREATE TABLE artist_url (
 );
 
 -- ============================================
+-- Masters (canonical album groupings)
+-- ============================================
+
+CREATE TABLE master (
+    id              integer PRIMARY KEY,
+    title           text NOT NULL,
+    main_release_id integer,
+    year            smallint
+);
+
+CREATE TABLE master_artist (
+    master_id       integer NOT NULL REFERENCES master(id) ON DELETE CASCADE,
+    artist_id       integer,
+    artist_name     text NOT NULL
+);
+
+-- ============================================
 -- Cache metadata (for tracking data freshness)
 -- ============================================
 
@@ -155,6 +174,9 @@ CREATE INDEX IF NOT EXISTS idx_artist_url_artist_id ON artist_url(artist_id);
 -- Partial index on master_id for dedup performance.
 -- Transient: dropped automatically by dedup copy-swap (which excludes master_id).
 CREATE INDEX IF NOT EXISTS idx_release_master_id ON release(master_id) WHERE master_id IS NOT NULL;
+
+-- Master indexes
+CREATE INDEX IF NOT EXISTS idx_master_artist_master_id ON master_artist(master_id);
 
 -- Cache metadata indexes
 CREATE INDEX IF NOT EXISTS idx_cache_metadata_cached_at ON cache_metadata(cached_at);
