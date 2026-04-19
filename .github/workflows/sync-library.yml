@@ -30,8 +30,17 @@ jobs:
         env:
           LIBRARY_SSH_HOST: ${{ secrets.LIBRARY_SSH_HOST }}
 
+      - name: Set up streaming links enrichment
+        run: |
+          git clone --depth 1 --branch main https://github.com/WXYC/library-metadata-lookup.git /tmp/library-metadata-lookup
+          gh release download streaming-data-v1 --repo WXYC/discogs-cache --dir /tmp/library-metadata-lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Run library sync
         run: scripts/sync-library.sh
+        env:
+          LML_REPO_DIR: /tmp/library-metadata-lookup
         env:
           LIBRARY_SSH_HOST: ${{ secrets.LIBRARY_SSH_HOST }}
           LIBRARY_SSH_USER: ${{ secrets.LIBRARY_SSH_USER }}
