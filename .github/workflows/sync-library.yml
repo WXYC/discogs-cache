@@ -16,21 +16,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install wxyc-etl from git (Rust/PyO3)
-        run: |
-          pip install maturin
-          git clone --depth 1 --branch etl-unification/1g-pyo3-bindings https://github.com/WXYC/wxyc-etl.git /tmp/wxyc-etl
-          cd /tmp/wxyc-etl/wxyc-etl-python && maturin build --release && pip install /tmp/wxyc-etl/target/wheels/*.whl
-
-      - name: Install MariaDB connector build dependencies
-        run: sudo apt-get install -y libmariadb-dev pkg-config
-
-      - name: Install wxyc-catalog from git
-        run: |
-          git clone --depth 1 --branch main https://github.com/WXYC/wxyc-catalog.git /tmp/wxyc-catalog
-          cd /tmp/wxyc-catalog && sed -i 's|setuptools.backends._legacy:_Backend|setuptools.build_meta|' pyproject.toml && pip install -e ".[mysql]"
+      - name: Install mysql client
+        run: sudo apt-get install -y mysql-client
 
       - run: pip install -e "."
 

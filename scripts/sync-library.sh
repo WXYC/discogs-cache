@@ -93,7 +93,6 @@ if [[ -z "$ADMIN_TOKEN" ]]; then
 fi
 
 log "Starting library sync"
-log "DB_USER length: ${#LIBRARY_DB_USER}, DB_PASSWORD length: ${#LIBRARY_DB_PASSWORD}, DB_HOST: $LIBRARY_DB_HOST, DB_NAME: $LIBRARY_DB_NAME"
 
 # Build MySQL connection URL from individual env vars
 if [[ -z "$LIBRARY_DB_HOST" || -z "$LIBRARY_DB_USER" || -z "$LIBRARY_DB_PASSWORD" || -z "$LIBRARY_DB_NAME" ]]; then
@@ -107,33 +106,68 @@ if [[ -n "$LIBRARY_SSH_HOST" && -n "$LIBRARY_SSH_USER" ]]; then
     ssh -f -N -L "${LOCAL_DB_PORT}:${LIBRARY_DB_HOST}:3306" \
         "${LIBRARY_SSH_USER}@${LIBRARY_SSH_HOST}" \
         -o StrictHostKeyChecking=no -o ConnectTimeout=10
-    # URL-encode user/password to handle special characters
-    ENCODED_PASSWORD=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_PASSWORD'], safe=''))")
-    ENCODED_USER=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_USER'], safe=''))")
-    CATALOG_DB_URL="mysql://${ENCODED_USER}:${ENCODED_PASSWORD}@127.0.0.1:${LOCAL_DB_PORT}/${LIBRARY_DB_NAME}"
-    log "SSH tunnel established on port $LOCAL_DB_PORT (encoded pw length: ${#ENCODED_PASSWORD})"
+    DB_HOST="127.0.0.1"
+    DB_PORT="$LOCAL_DB_PORT"
+    log "SSH tunnel established on port $LOCAL_DB_PORT"
 else
-    ENCODED_PASSWORD=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_PASSWORD'], safe=''))")
-    ENCODED_USER=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_USER'], safe=''))")
-    CATALOG_DB_URL="mysql://${ENCODED_USER}:${ENCODED_PASSWORD}@${LIBRARY_DB_HOST}/${LIBRARY_DB_NAME}"
+    DB_HOST="$LIBRARY_DB_HOST"
+    DB_PORT="3306"
 fi
 
-# Run ETL, capturing output for error reporting
+# Run ETL: query MySQL via CLI (bypasses Python driver auth issues with MySQL 4.1)
 DB_PATH=$(mktemp -d)/library.db
+MYSQL_HOST="${DB_HOST:-$LIBRARY_DB_HOST}"
+MYSQL_PORT="${DB_PORT:-3306}"
 
 ETL_OUTPUT=$(mktemp)
-if ! wxyc-export-to-sqlite \
-    --catalog-source tubafrenzy \
-    --catalog-db-url "$CATALOG_DB_URL" \
-    --output "$DB_PATH" 2>&1 | tee "$ETL_OUTPUT"; then
-    ERROR_DETAILS=$(grep -v '^[[:space:]]' "$ETL_OUTPUT" | grep -v '^$' | tail -1 | sed 's/"/\\"/g')
+CSV_FILE=$(mktemp)
+if ! mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$LIBRARY_DB_USER" -p"$LIBRARY_DB_PASSWORD" \
+    --default-character-set=utf8 -B -N "$LIBRARY_DB_NAME" \
+    -e "SELECT r.ID, r.TITLE, lc.PRESENTATION_NAME, lc.CALL_LETTERS, lc.CALL_NUMBERS, r.CALL_NUMBERS, g.REFERENCE_NAME, f.REFERENCE_NAME, r.ALTERNATE_ARTIST_NAME FROM LIBRARY_RELEASE r JOIN LIBRARY_CODE lc ON r.LIBRARY_CODE_ID = lc.ID JOIN FORMAT f ON r.FORMAT_ID = f.ID JOIN GENRE g ON lc.GENRE_ID = g.ID" \
+    > "$CSV_FILE" 2> "$ETL_OUTPUT"; then
+    ERROR_DETAILS=$(cat "$ETL_OUTPUT" | tail -1 | sed 's/"/\\"/g')
     cat "$ETL_OUTPUT" >> "$LOG_FILE"
-    rm -f "$ETL_OUTPUT" "$DB_PATH"
-    notify_error "ETL script failed: $ERROR_DETAILS"
+    rm -f "$ETL_OUTPUT" "$CSV_FILE" "$DB_PATH"
+    notify_error "MySQL query failed: $ERROR_DETAILS"
     exit 1
 fi
 cat "$ETL_OUTPUT" >> "$LOG_FILE"
 rm -f "$ETL_OUTPUT"
+
+ROW_COUNT=$(wc -l < "$CSV_FILE" | tr -d ' ')
+log "Fetched $ROW_COUNT rows from MySQL"
+
+# Build SQLite database from TSV output
+if ! $PYTHON -c "
+import csv, sqlite3, sys
+conn = sqlite3.connect('$DB_PATH')
+cur = conn.cursor()
+cur.execute('''CREATE TABLE library (
+    id INTEGER PRIMARY KEY, title TEXT, artist TEXT, call_letters TEXT,
+    artist_call_number INTEGER, release_call_number INTEGER,
+    genre TEXT, format TEXT, alternate_artist_name TEXT
+)''')
+cur.execute('''CREATE VIRTUAL TABLE library_fts USING fts5(
+    title, artist, alternate_artist_name, content='library', content_rowid='id'
+)''')
+reader = csv.reader(open('$CSV_FILE'), delimiter='\t')
+for row in reader:
+    # MySQL -B outputs \N for NULL
+    row = [None if v == '\\\\N' else v for v in row]
+    cur.execute('INSERT INTO library VALUES (?,?,?,?,?,?,?,?,?)', row)
+cur.execute('INSERT INTO library_fts(rowid, title, artist, alternate_artist_name) SELECT id, title, artist, alternate_artist_name FROM library')
+cur.execute('CREATE INDEX idx_artist ON library(artist)')
+cur.execute('CREATE INDEX idx_title ON library(title)')
+cur.execute('CREATE INDEX idx_alternate_artist ON library(alternate_artist_name)')
+conn.commit()
+conn.close()
+print(f'Exported {sum(1 for _ in open(\"$CSV_FILE\"))} rows to $DB_PATH')
+" 2>&1 | tee -a "$LOG_FILE"; then
+    rm -f "$CSV_FILE" "$DB_PATH"
+    notify_error "SQLite export failed"
+    exit 1
+fi
+rm -f "$CSV_FILE"
 
 # Enrich with streaming links (optional — skipped if streaming_availability.db unavailable)
 LML_DIR="${LML_REPO_DIR:-$(dirname "$REPO_DIR")/library-metadata-lookup}"
