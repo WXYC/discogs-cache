@@ -26,7 +26,7 @@ jobs:
 
       - name: Install wxyc-catalog from git
         run: |
-          git clone --depth 1 --branch fix-mysql41-auth https://github.com/WXYC/wxyc-catalog.git /tmp/wxyc-catalog
+          git clone --depth 1 --branch main https://github.com/WXYC/wxyc-catalog.git /tmp/wxyc-catalog
           cd /tmp/wxyc-catalog && sed -i 's|setuptools.backends._legacy:_Backend|setuptools.build_meta|' pyproject.toml && pip install -e ".[mysql]"
 
       - run: pip install -e "."
