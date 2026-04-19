@@ -93,6 +93,7 @@ if [[ -z "$ADMIN_TOKEN" ]]; then
 fi
 
 log "Starting library sync"
+log "DB_USER length: ${#LIBRARY_DB_USER}, DB_PASSWORD length: ${#LIBRARY_DB_PASSWORD}, DB_HOST: $LIBRARY_DB_HOST, DB_NAME: $LIBRARY_DB_NAME"
 
 # Build MySQL connection URL from individual env vars
 if [[ -z "$LIBRARY_DB_HOST" || -z "$LIBRARY_DB_USER" || -z "$LIBRARY_DB_PASSWORD" || -z "$LIBRARY_DB_NAME" ]]; then
@@ -110,7 +111,7 @@ if [[ -n "$LIBRARY_SSH_HOST" && -n "$LIBRARY_SSH_USER" ]]; then
     ENCODED_PASSWORD=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_PASSWORD'], safe=''))")
     ENCODED_USER=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_USER'], safe=''))")
     CATALOG_DB_URL="mysql://${ENCODED_USER}:${ENCODED_PASSWORD}@127.0.0.1:${LOCAL_DB_PORT}/${LIBRARY_DB_NAME}"
-    log "SSH tunnel established on port $LOCAL_DB_PORT"
+    log "SSH tunnel established on port $LOCAL_DB_PORT (encoded pw length: ${#ENCODED_PASSWORD})"
 else
     ENCODED_PASSWORD=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_PASSWORD'], safe=''))")
     ENCODED_USER=$($PYTHON -c "from urllib.parse import quote; import os; print(quote(os.environ['LIBRARY_DB_USER'], safe=''))")
