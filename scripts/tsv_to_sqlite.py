@@ -1,19 +1,19 @@
 """Convert a MySQL TSV dump to a SQLite database with FTS5 index.
 
-Reads a tab-separated file (as produced by ``mysql -B -N``) with 9 columns
+Reads a tab-separated file (as produced by ``mysql -B -N``) with 10 columns
 corresponding to the WXYC library catalog schema and creates a SQLite
 database containing:
 
 - A ``library`` table with id, title, artist, call_letters,
   artist_call_number, release_call_number, genre, format,
-  alternate_artist_name, and label columns (label is always NULL
-  since the MySQL query doesn't include it).
+  alternate_artist_name, album_artist, and label columns (label is always
+  NULL since the MySQL query doesn't include it).
 - An FTS5 virtual table (``library_fts``) for full-text search on title,
-  artist, and alternate_artist_name.
-- Indexes on artist, title, and alternate_artist_name.
+  artist, alternate_artist_name, and album_artist.
+- Indexes on artist, title, alternate_artist_name, and album_artist.
 
 MySQL ``\\N`` values are converted to SQL NULL. Rows that do not contain
-exactly 9 tab-separated fields are skipped with a warning on stderr.
+exactly 10 tab-separated fields are skipped with a warning on stderr.
 """
 
 from __future__ import annotations
@@ -38,17 +38,18 @@ def tsv_to_sqlite(tsv_path: str, db_path: str) -> int:
         id INTEGER PRIMARY KEY, title TEXT, artist TEXT, call_letters TEXT,
         artist_call_number INTEGER, release_call_number INTEGER,
         genre TEXT, format TEXT, alternate_artist_name TEXT,
-        label TEXT
+        album_artist TEXT, label TEXT
     )""")
     cur.execute("""CREATE VIRTUAL TABLE library_fts USING fts5(
-        title, artist, alternate_artist_name, content='library', content_rowid='id'
+        title, artist, alternate_artist_name, album_artist,
+        content='library', content_rowid='id'
     )""")
 
     count = 0
     with open(tsv_path, encoding="utf-8") as f:
         for line in f:
             fields = line.rstrip("\n").split("\t")
-            if len(fields) != 9:
+            if len(fields) != 10:
                 print(
                     f"WARNING: skipping malformed row with {len(fields)} fields",
                     file=sys.stderr,
@@ -59,16 +60,17 @@ def tsv_to_sqlite(tsv_path: str, db_path: str) -> int:
             cur.execute(
                 "INSERT INTO library (id, title, artist, call_letters,"
                 " artist_call_number, release_call_number, genre, format,"
-                " alternate_artist_name) VALUES (?,?,?,?,?,?,?,?,?)",
+                " alternate_artist_name, album_artist) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 row,
             )
             count += 1
 
-    cur.execute("""INSERT INTO library_fts(rowid, title, artist, alternate_artist_name)
-        SELECT id, title, artist, alternate_artist_name FROM library""")
+    cur.execute("""INSERT INTO library_fts(rowid, title, artist, alternate_artist_name, album_artist)
+        SELECT id, title, artist, alternate_artist_name, album_artist FROM library""")
     cur.execute("CREATE INDEX idx_artist ON library(artist)")
     cur.execute("CREATE INDEX idx_title ON library(title)")
     cur.execute("CREATE INDEX idx_alternate_artist ON library(alternate_artist_name)")
+    cur.execute("CREATE INDEX idx_album_artist ON library(album_artist)")
     conn.commit()
     conn.close()
     return count
