@@ -929,6 +929,11 @@ COPY_TABLE_SPEC = [
         ["release_id", "track_sequence", "artist_name"],
     ),
     (
+        "release_video",
+        "release_id",
+        ["release_id", "sequence", "src", "title", "duration", "embed"],
+    ),
+    (
         "cache_metadata",
         "release_id",
         ["release_id", "cached_at", "source", "last_validated"],
@@ -978,6 +983,7 @@ def _create_target_schema(target_url: str) -> None:
             "cache_metadata",
             "release_track_artist",
             "release_track",
+            "release_video",
             "release_style",
             "release_genre",
             "release_label",
