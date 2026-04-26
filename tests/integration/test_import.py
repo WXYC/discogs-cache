@@ -114,7 +114,7 @@ class TestImportCsv:
             )
             labels = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert labels == ["Capitol Records", "Parlophone"]
+        assert labels == ["Arcola", "Warp Records"]
 
     def test_release_track_row_count(self) -> None:
         conn = self._connect()
