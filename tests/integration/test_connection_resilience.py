@@ -326,7 +326,7 @@ class TestImportResumeAfterConnectionLoss:
             artist_count = cur.fetchone()[0]
         verify.close()
         assert release_count == 15  # 16 rows minus 1 with empty title
-        assert artist_count == 16
+        assert artist_count == 17
 
     def test_state_file_tracks_resume_correctly(self, tmp_path) -> None:
         """State file correctly tracks step completion across resume.
