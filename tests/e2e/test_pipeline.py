@@ -590,9 +590,6 @@ class TestPipelineWithCopyTo:
         }
         assert expected.issubset(indexes), f"Missing indexes: {expected - indexes}"
 
-    @pytest.mark.skip(
-        reason="Pre-existing failure unmasked by #103; copy-to doesn't include release_video; see #109"
-    )
     def test_target_tables_populated(self) -> None:
         """Core tables in target have rows."""
         conn = psycopg.connect(self.target_url)
@@ -610,9 +607,6 @@ class TestPipelineWithCopyTo:
             assert count > 0, f"Table {table} is empty in target"
         conn.close()
 
-    @pytest.mark.skip(
-        reason="Pre-existing failure unmasked by #103; copy-to doesn't include release_video; see #109"
-    )
     def test_target_has_videos_for_matched_release(self) -> None:
         """Videos for matched releases are copied to the target database."""
         conn = psycopg.connect(self.target_url)
