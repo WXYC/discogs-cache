@@ -303,11 +303,11 @@ class TestFullPipelineCrossRepo:
                 "JOIN release r ON r.id = rt.release_id "
                 "WHERE similarity(lower(f_unaccent(rt.title)), "
                 "lower(f_unaccent(%(track)s))) > 0.3 LIMIT 5",
-                {"track": "Airbag"},
+                {"track": "VI Scose Poise"},
             )
             results = cur.fetchall()
         conn.close()
-        assert len(results) > 0, "Track search for 'Airbag' returned no results"
+        assert len(results) > 0, "Track search for 'VI Scose Poise' returned no results"
 
     def test_cache_metadata_populated(self) -> None:
         """cache_metadata table has bulk_import entries."""
@@ -483,5 +483,5 @@ class TestXmlConverterToPipelineIntegration:
             cur.execute("SELECT DISTINCT title FROM release_track")
             tracks = {row[0] for row in cur.fetchall()}
         conn.close()
-        assert "Airbag" in tracks, f"'Airbag' not found in {tracks}"
         assert "VI Scose Poise" in tracks, f"'VI Scose Poise' not found in {tracks}"
+        assert "Cfern" in tracks, f"'Cfern' not found in {tracks}"

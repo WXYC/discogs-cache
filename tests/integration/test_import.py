@@ -92,8 +92,8 @@ class TestImportCsv:
             cur.execute("SELECT count(*) FROM release_artist")
             count = cur.fetchone()[0]
         conn.close()
-        # 16 rows in fixture CSV (all have required fields)
-        assert count == 16
+        # 17 rows in fixture CSV (all have required fields)
+        assert count == 17
 
     def test_release_label_row_count(self) -> None:
         """All label rows imported (one per unique release_id+label pair)."""
@@ -128,11 +128,11 @@ class TestImportCsv:
         """Dates are transformed to 4-digit years."""
         conn = self._connect()
         with conn.cursor() as cur:
-            # Release 1001 has released="1997-06-16", should become 1997
+            # Release 1001 has released="2001-04-23", should become 2001
             cur.execute("SELECT release_year FROM release WHERE id = 1001")
             year = cur.fetchone()[0]
         conn.close()
-        assert year == 1997
+        assert year == 2001
 
     def test_unknown_date_yields_null(self) -> None:
         """Non-date strings in released field produce NULL release_year."""
@@ -802,8 +802,8 @@ class TestImportReleaseVideo:
             rows = cur.fetchall()
         conn.close()
         assert len(rows) == 2
-        assert rows[0] == (1, "Airbag")
-        assert rows[1] == (2, "Paranoid Android")
+        assert rows[0] == (1, "VI Scose Poise")
+        assert rows[1] == (2, "Cfern")
 
     def test_embed_false_stored_correctly(self) -> None:
         """embed=false in CSV is stored as FALSE boolean in the database."""
@@ -841,7 +841,7 @@ class TestImportReleaseVideo:
             )
             duration = cur.fetchone()[0]
         conn.close()
-        assert duration == 284
+        assert duration == 291
 
     def test_src_stored(self) -> None:
         """src URL is stored as-is."""

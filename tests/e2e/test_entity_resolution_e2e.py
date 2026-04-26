@@ -81,7 +81,7 @@ WXYC_ARTISTS = [
 # Artists that exist in the fixture CSV data and can be reconciled
 FIXTURE_ARTISTS_WITH_DISCOGS = {
     "Autechre": 1,
-    "Father John Misty": 2,
+    "Stereolab": 2,
 }
 
 # Artists that should NOT match anything in the fixture data
