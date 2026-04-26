@@ -255,7 +255,7 @@ class TestDedup:
             )
             labels = [row[0] for row in cur.fetchall()]
         conn.close()
-        assert "Parlophone" in labels
+        assert "Warp Records" in labels
 
     def test_all_releases_have_tracks(self) -> None:
         """All format-unique releases have their tracks (imported after dedup)."""
