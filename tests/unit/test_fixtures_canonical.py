@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIBRARY_ARTISTS_TXT = REPO_ROOT / "tests" / "fixtures" / "library_artists.txt"
 
@@ -33,18 +35,32 @@ _CANONICAL_RELATIVE = "wxyc-shared/src/test-utils/wxyc-example-data.json"
 ALLOWED_NON_CANONICAL = {"Field, The"}
 
 
-def _find_canonical() -> Path:
+def _find_canonical() -> Path | None:
+    """Walk up from REPO_ROOT looking for the canonical JSON.
+
+    Returns None when the file isn't reachable. This happens in CI, where only
+    the discogs-etl repo is checked out — wxyc-shared isn't a sibling there.
+    Local development checkouts of the WXYC org do have wxyc-shared alongside
+    discogs-etl, so the guard runs there and catches regressions before push.
+    """
     d = REPO_ROOT
     while d != d.parent:
         candidate = d / _CANONICAL_RELATIVE
         if candidate.exists():
             return candidate
         d = d.parent
-    raise FileNotFoundError(f"could not locate {_CANONICAL_RELATIVE} above {REPO_ROOT}")
+    return None
 
 
 def _canonical_artist_names() -> set[str]:
-    with _find_canonical().open() as f:
+    canonical_path = _find_canonical()
+    if canonical_path is None:
+        pytest.skip(
+            f"canonical artist data not reachable above {REPO_ROOT}; "
+            f"this guard only runs in local WXYC org checkouts where "
+            f"wxyc-shared is a sibling repo"
+        )
+    with canonical_path.open() as f:
         return set(json.load(f)["canonicalArtistNames"])
 
 

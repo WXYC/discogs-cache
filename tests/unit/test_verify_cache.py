@@ -1139,7 +1139,7 @@ class TestLibraryIndexFormat:
         """NULL format produces None in format set."""
         rows = [("Stereolab", "Dots and Loops", None)]
         idx = LibraryIndex.from_rows(rows)
-        norm_artist = normalize_artist("Father John Misty")
+        norm_artist = normalize_artist("Stereolab")
         norm_title = normalize_title("Dots and Loops")
         formats = idx.format_by_pair.get((norm_artist, norm_title), set())
         assert None in formats
