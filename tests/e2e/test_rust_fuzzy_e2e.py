@@ -200,10 +200,10 @@ class TestVerifyCacheFuzzy:
     def test_keep_count_within_expected_range(self) -> None:
         """KEEP count is in the expected range for fixture data.
 
-        The fixture has matching releases for Radiohead (OK Computer CD+Vinyl,
-        Kid A, Amnesiac), Joy Division (Unknown Pleasures LP+CD), Bjork (Homogenic),
-        Beatles (Abbey Road), Simon & Garfunkel (Bridge Over Troubled Water),
-        and Sugar Hill (VA compilation). After dedup, some duplicates are removed.
+        The fixture has matching releases for Autechre (Confield CD+Vinyl,
+        Amber, Tri Repetae), Father John Misty (I Love You, Honeybear LP+CD), Nilufer Yanya (PAINLESS),
+        Field (From Here We Go Sublime), Duke Ellington & John Coltrane (Duke Ellington & John Coltrane),
+        and Nordic Roots (VA compilation). After dedup, some duplicates are removed.
         With 15 imported releases and ~8 matching the library, expected: 5-12 KEEP.
         """
         counts = self._parse_classification_counts()
@@ -215,7 +215,7 @@ class TestVerifyCacheFuzzy:
 
         The fixture has releases by Random Artist X (10001), Obscure Band Y
         (10002), DJ Unknown (5001), Mystery Band (5002), and the Cassette
-        pressing of OK Computer (1003, format mismatch with library). Some
+        pressing of Confield (1003, format mismatch with library). Some
         compilation or extra-artist releases may also be pruned.
         With 15 imported releases and ~7 pruned, expected: 3-10 PRUNE.
         """
@@ -228,8 +228,8 @@ class TestVerifyCacheFuzzy:
 
         verify_cache.py logs phase information during classification.
         Some fixture artists require fuzzy scoring because their names differ
-        between Discogs and the library (e.g. 'Beatles, The' vs 'The Beatles',
-        'Bjork' accent normalization).
+        between Discogs and the library (e.g. 'Field, The' vs 'The Field',
+        'Nilufer Yanya' accent normalization).
         """
         combined = self.verify_stderr + self.verify_stdout
         has_classification_log = (

@@ -46,19 +46,19 @@ class TestNormalizeTitle:
         [
             ('Automanikk 12"', "automanikk"),
             ("Cobra (2 cd set)", "cobra"),
-            ("OK Computer (reissue)", "ok computer"),
+            ("Confield (reissue)", "confield"),
             ("Dummy (3)", "dummy"),  # Discogs disambiguation
-            ("Abbey Road", "abbey road"),  # no-op
+            ("From Here We Go Sublime", "from here we go sublime"),  # no-op
             ("In Utero (ep)", "in utero"),
             ("Loveless (deluxe edition)", "loveless"),
             ("  Spaced Out  ", "spaced out"),
             ('Raw Power 7"', "raw power"),
-            ("Homogenic (2lp)", "homogenic"),
+            ("PAINLESS (2lp)", "painless"),
             ("Loveless (expanded edition)", "loveless"),
-            ("OK Computer (anniversary edition)", "ok computer"),
+            ("Confield (anniversary edition)", "confield"),
             ("In Utero (special edition)", "in utero"),
             ("Dummy (limited edition)", "dummy"),
-            ("Kid A (bonus tracks)", "kid a"),
+            ("Amber (bonus tracks)", "amber"),
         ],
         ids=[
             "vinyl_12_inch",
@@ -88,15 +88,15 @@ class TestNormalizeArtist:
     @pytest.mark.parametrize(
         "raw, expected",
         [
-            ("Radiohead", "radiohead"),
-            ("Beatles, The", "the beatles"),
-            ("Bjork (2)", "bjork"),  # Discogs disambiguation
+            ("Autechre", "autechre"),
+            ("Field, The", "the field"),
+            ("Nilufer Yanya (2)", "nilufer yanya"),  # Discogs disambiguation
             ("Artist [Scotland]", "artist"),  # Library disambiguation
-            ("Simon & Garfunkel", "simon and garfunkel"),
-            ("Simon And Garfunkel", "simon and garfunkel"),
+            ("Duke Ellington & John Coltrane", "duke ellington and john coltrane"),
+            ("Duke Ellington And John Coltrane", "duke ellington and john coltrane"),
             ("Guns N' Roses", "guns n roses"),
             ("  Spaced  ", "spaced"),
-            ("Björk", "bjork"),  # Accent stripping
+            ("Nilüfer Yanya", "nilufer yanya"),  # Accent stripping
             ("E.S.T.", "e.s.t."),  # Dots preserved
         ],
         ids=[
@@ -139,16 +139,16 @@ class TestNormalizeArtistCommaConventions:
 
 # Shared fixture: a small hand-crafted library for testing
 SAMPLE_LIBRARY_ROWS = [
-    ("Radiohead", "OK Computer"),
-    ("Radiohead", "Kid A"),
-    ("Joy Division", "Unknown Pleasures"),
-    ("Joy Division", "Closer"),
+    ("Autechre", "Confield"),
+    ("Autechre", "Amber"),
+    ("Father John Misty", "I Love You, Honeybear"),
+    ("Father John Misty", "Pure Comedy"),
     ("Aphex Twin", "Selected Ambient Works 85-92"),
     ("Aphex Twin", 'Analord 10 12"'),
-    ("Beatles, The", "Abbey Road"),
-    ("Simon & Garfunkel", "Bridge Over Troubled Water"),
-    ("Björk", "Homogenic"),
-    ("Various Artists - Compilations", "Sugar Hill"),
+    ("Field, The", "From Here We Go Sublime"),
+    ("Duke Ellington & John Coltrane", "Duke Ellington & John Coltrane"),
+    ("Nilüfer Yanya", "PAINLESS"),
+    ("Various Artists", "Nordic Roots"),
     ("Soundtracks - S", "Lost In Translation"),
 ]
 
@@ -164,8 +164,8 @@ class TestLibraryIndex:
 
     def test_exact_pairs_populated(self, sample_index):
         """Normalized (artist, title) tuples are in exact_pairs."""
-        assert ("radiohead", "ok computer") in sample_index.exact_pairs
-        assert ("radiohead", "kid a") in sample_index.exact_pairs
+        assert ("autechre", "confield") in sample_index.exact_pairs
+        assert ("autechre", "amber") in sample_index.exact_pairs
 
     def test_exact_pairs_normalizes_titles(self, sample_index):
         """Title normalization strips suffixes before inserting into exact_pairs."""
@@ -174,45 +174,45 @@ class TestLibraryIndex:
 
     def test_exact_pairs_normalizes_artists(self, sample_index):
         """Artist normalization handles ampersands and accents."""
-        assert ("simon and garfunkel", "bridge over troubled water") in sample_index.exact_pairs
-        assert ("bjork", "homogenic") in sample_index.exact_pairs
+        assert ("duke ellington and john coltrane", "duke ellington & john coltrane") in sample_index.exact_pairs
+        assert ("nilufer yanya", "painless") in sample_index.exact_pairs
 
     def test_artist_to_titles_mapping(self, sample_index):
         """Each artist maps to the set of their normalized titles."""
-        assert sample_index.artist_to_titles["radiohead"] == {"ok computer", "kid a"}
-        assert "unknown pleasures" in sample_index.artist_to_titles["joy division"]
+        assert sample_index.artist_to_titles["autechre"] == {"confield", "amber"}
+        assert "i love you, honeybear" in sample_index.artist_to_titles["father john misty"]
 
     def test_combined_strings_format(self, sample_index):
         """Combined strings use 'artist ||| title' format."""
-        assert "radiohead ||| ok computer" in sample_index.combined_strings
+        assert "autechre ||| confield" in sample_index.combined_strings
 
     def test_combined_to_original_maps_back(self, sample_index):
         """combined_to_original maps the combined string back to the normalized pair."""
-        key = "radiohead ||| ok computer"
-        assert sample_index.combined_to_original[key] == ("radiohead", "ok computer")
+        key = "autechre ||| confield"
+        assert sample_index.combined_to_original[key] == ("autechre", "confield")
 
     def test_all_artists_populated(self, sample_index):
         """all_artists contains deduplicated normalized artist names."""
         artists = sample_index.all_artists
-        assert "radiohead" in artists
-        assert "joy division" in artists
+        assert "autechre" in artists
+        assert "father john misty" in artists
         # No duplicates
         assert len(set(artists)) == len(artists)
 
     def test_various_artists_excluded(self, sample_index):
         """Compilation entries are separated into compilation_index."""
-        # "Various Artists - Compilations" and "Soundtracks - S" are compilations
-        assert "various artists - compilations" not in sample_index.all_artists
+        # "Various Artists" and "Soundtracks - S" are compilations
+        assert "various artists" not in sample_index.all_artists
         assert "soundtracks - s" not in sample_index.all_artists
         # But they should be in compilation_titles
         assert sample_index.compilation_titles is not None
-        assert "sugar hill" in sample_index.compilation_titles
+        assert "nordic roots" in sample_index.compilation_titles
 
     def test_deduplication(self):
         """Duplicate rows produce unique entries."""
         rows = [
-            ("Radiohead", "OK Computer"),
-            ("Radiohead", "OK Computer"),  # duplicate
+            ("Autechre", "Confield"),
+            ("Autechre", "Confield"),  # duplicate
         ]
         idx = LibraryIndex.from_rows(rows)
         assert len(idx.exact_pairs) == 1
@@ -278,7 +278,7 @@ class TestLibraryIndexMultiArtistSplitting:
 
     def test_ampersand_no_split_without_standalone(self):
         """Ampersand entries don't split when no component is standalone."""
-        rows = [("Simon & Garfunkel", "Bridge Over Troubled Water")]
+        rows = [("Duke Ellington & John Coltrane", "Duke Ellington & John Coltrane")]
         idx = LibraryIndex.from_rows(rows)
         # Neither "simon" nor "garfunkel" should appear
         assert "simon" not in idx.artist_to_titles
@@ -304,31 +304,31 @@ class TestScoreExact:
     """Test exact pair matching scorer."""
 
     def test_exact_match_returns_1(self, sample_index):
-        assert score_exact("radiohead", "ok computer", sample_index) == 1.0
+        assert score_exact("autechre", "confield", sample_index) == 1.0
 
     def test_no_match_returns_0(self, sample_index):
-        assert score_exact("radiohead", "the bends", sample_index) == 0.0
+        assert score_exact("autechre", "the bends", sample_index) == 0.0
 
     def test_normalizes_before_lookup(self, sample_index):
         """Inputs are already normalized by caller, but verify exact lookup."""
-        assert score_exact("the beatles", "abbey road", sample_index) == 1.0
+        assert score_exact("the field", "from here we go sublime", sample_index) == 1.0
 
 
 class TestScoreTokenSet:
     """Test token_set_ratio on combined 'artist ||| title' strings."""
 
     def test_high_similarity_for_exact_match(self, sample_index):
-        score = score_token_set("radiohead", "ok computer", sample_index)
+        score = score_token_set("autechre", "confield", sample_index)
         assert score >= 0.95
 
     def test_partial_artist_with_matching_title_is_high(self, sample_index):
-        """'Joy' / 'Unknown Pleasures' vs 'Joy Division' / 'Unknown Pleasures'.
+        """'Joy' / 'I Love You, Honeybear' vs 'Father John Misty' / 'I Love You, Honeybear'.
 
-        token_set_ratio is generous with subset matches -- 'joy' is a subset
-        of 'joy division' tokens, so this scores very high (1.0). This is the
+        token_set_ratio is generous with subset matches -- 'father' is a subset
+        of 'father john misty' tokens, so this scores very high (1.0). This is the
         known weakness that multi-index agreement compensates for.
         """
-        score = score_token_set("joy", "unknown pleasures", sample_index)
+        score = score_token_set("father", "i love you, honeybear", sample_index)
         assert score >= 0.9  # token_set_ratio treats subsets generously
 
     def test_no_match_is_low(self, sample_index):
@@ -340,7 +340,7 @@ class TestScoreTokenSort:
     """Test token_sort_ratio on combined strings."""
 
     def test_high_similarity_for_exact_match(self, sample_index):
-        score = score_token_sort("radiohead", "ok computer", sample_index)
+        score = score_token_sort("autechre", "confield", sample_index)
         assert score >= 0.95
 
     def test_no_match_is_low(self, sample_index):
@@ -352,16 +352,16 @@ class TestScoreTwoStage:
     """Test two-stage scorer: artist match then title match."""
 
     def test_exact_artist_and_title(self, sample_index):
-        score = score_two_stage("radiohead", "ok computer", sample_index)
+        score = score_two_stage("autechre", "confield", sample_index)
         assert score >= 0.95
 
     def test_penalizes_short_artist_with_wrong_title(self, sample_index):
-        """'Joy' fuzzy-matches 'Joy Division' but 'Some Album' doesn't match titles.
+        """'father' fuzzy-matches 'Father John Misty' but 'Some Album' doesn't match titles.
 
         The two-stage scorer uses geometric mean: even if artist matches well,
         a poor title match drags the score down. Should be moderate at best.
         """
-        score = score_two_stage("joy", "some album", sample_index)
+        score = score_two_stage("father", "some album", sample_index)
         assert score < 0.75  # below the KEEP threshold
 
     def test_est_matches_est(self):
@@ -390,7 +390,7 @@ class TestMultiIndexMatcher:
     def test_exact_match_is_keep(self, sample_index):
         """An exact pair match should always be KEEP."""
         matcher = MultiIndexMatcher(sample_index)
-        result = matcher.classify("radiohead", "ok computer")
+        result = matcher.classify("autechre", "confield")
         assert result.decision == Decision.KEEP
 
     def test_two_of_three_above_threshold_is_keep(self, sample_index):
@@ -456,20 +456,20 @@ class TestMultiIndexMatcher:
             result = matcher.classify("some artist", "some title")
         assert result.decision == Decision.REVIEW
 
-    def test_joy_does_not_keep_as_joy_division(self, sample_index):
-        """'Joy' / 'Random Album' should not match 'Joy Division' and KEEP.
+    def test_subset_artist_does_not_keep_without_title_match(self, sample_index):
+        """'father' / 'Random Album' should not match 'Father John Misty' and KEEP.
 
         Even though token_set_ratio might be generous, the multi-index
         agreement should not let it through without title confirmation.
         """
         matcher = MultiIndexMatcher(sample_index)
-        result = matcher.classify("joy", "random album")
+        result = matcher.classify("father", "random album")
         assert result.decision != Decision.KEEP
 
     def test_result_contains_scores(self, sample_index):
         """MatchResult should contain individual scorer scores."""
         matcher = MultiIndexMatcher(sample_index)
-        result = matcher.classify("radiohead", "ok computer")
+        result = matcher.classify("autechre", "confield")
         assert result.exact_score == 1.0
         assert hasattr(result, "token_set_score")
         assert hasattr(result, "token_sort_score")
@@ -482,10 +482,10 @@ class TestClassifyKnownArtist:
     @pytest.mark.parametrize(
         "artist, title, expected_decision",
         [
-            ("radiohead", "ok computer", Decision.KEEP),  # exact pair
-            ("radiohead", "kid a", Decision.KEEP),  # exact pair
-            ("radiohead", "ok computers", Decision.KEEP),  # fuzzy title >= keep
-            ("radiohead", "nonexistent album", Decision.PRUNE),  # no title match
+            ("autechre", "confield", Decision.KEEP),  # exact pair
+            ("autechre", "amber", Decision.KEEP),  # exact pair
+            ("autechre", "confields", Decision.KEEP),  # fuzzy title >= keep
+            ("autechre", "nonexistent album", Decision.PRUNE),  # no title match
             ("aphex twin", "selected ambient works", Decision.KEEP),  # partial title
         ],
         ids=[
@@ -510,7 +510,7 @@ class TestClassifyKnownArtist:
     def test_exact_match_sets_all_scores_to_1(self, sample_index):
         """Exact pair match short-circuits with all scores at 1.0."""
         matcher = MultiIndexMatcher(sample_index)
-        result = matcher.classify_known_artist("radiohead", "ok computer")
+        result = matcher.classify_known_artist("autechre", "confield")
         assert result.exact_score == 1.0
         assert result.two_stage_score == 1.0
 
@@ -532,20 +532,20 @@ class TestArtistMappings:
         """Reads JSON and returns keep/prune dicts."""
         path = tmp_path / "mappings.json"
         data = {
-            "keep": {"bjork (2)": "Bjork", "sunn o)))": "Sunn O)))"},
-            "prune": {"joy": None},
+            "keep": {"nilufer yanya (2)": "Nilufer Yanya", "sunn o)))": "Sunn O)))"},
+            "prune": {"father": None},
         }
         path.write_text(json.dumps(data))
         mappings = load_artist_mappings(path)
-        assert mappings["keep"]["bjork (2)"] == "Bjork"
-        assert mappings["prune"]["joy"] is None
+        assert mappings["keep"]["nilufer yanya (2)"] == "Nilufer Yanya"
+        assert mappings["prune"]["father"] is None
 
     def test_save_mappings(self, tmp_path):
         """Writes JSON that round-trips correctly."""
         path = tmp_path / "mappings.json"
         data = {
-            "keep": {"bjork (2)": "Bjork"},
-            "prune": {"joy": None},
+            "keep": {"nilufer yanya (2)": "Nilufer Yanya"},
+            "prune": {"father": None},
         }
         save_artist_mappings(path, data)
         loaded = load_artist_mappings(path)
@@ -567,9 +567,9 @@ class TestArtistMappings:
 
     def test_mappings_override_prune(self, sample_index):
         """A release whose artist is in prune mappings -> PRUNE."""
-        mappings = {"keep": {}, "prune": {"joy": None}}
+        mappings = {"keep": {}, "prune": {"father": None}}
         matcher = MultiIndexMatcher(sample_index, artist_mappings=mappings)
-        result = matcher.classify("joy", "unknown pleasures")
+        result = matcher.classify("father", "i love you, honeybear")
         assert result.decision == Decision.PRUNE
 
 
@@ -582,8 +582,8 @@ class TestCompilationHandling:
     """Test compilation classification by title-only matching."""
 
     def test_compilation_matched_by_title(self, sample_index):
-        """'Various Artists' / 'Sugar Hill' matches the compilation title."""
-        result = classify_compilation("sugar hill", sample_index)
+        """'Various Artists' / 'Nordic Roots' matches the compilation title."""
+        result = classify_compilation("nordic roots", sample_index)
         assert result == Decision.KEEP
 
     def test_compilation_no_match(self, sample_index):
@@ -593,7 +593,7 @@ class TestCompilationHandling:
 
     def test_compilation_fuzzy_match(self):
         """Fuzzy title matching for compilations (minor spelling differences)."""
-        rows = [("Various Artists - Compilations", "Lost In Translation")]
+        rows = [("Various Artists", "Lost In Translation")]
         idx = LibraryIndex.from_rows(rows)
         result = classify_compilation("lost in translation", idx)
         assert result == Decision.KEEP
@@ -614,13 +614,13 @@ class TestLoadDiscogsReleases:
         mock_conn.fetch = AsyncMock(
             return_value=[
                 {"id": 28138, "title": "Confield", "artist_name": "Autechre", "format": "CD"},
-                {"id": 12345, "title": "OK Computer", "artist_name": "Radiohead", "format": None},
+                {"id": 12345, "title": "Confield", "artist_name": "Autechre", "format": None},
             ]
         )
         releases = await load_discogs_releases(mock_conn)
         assert len(releases) == 2
         assert releases[0] == (28138, "Autechre", "Confield", "CD")
-        assert releases[1] == (12345, "Radiohead", "OK Computer", None)
+        assert releases[1] == (12345, "Autechre", "Confield", None)
 
     @pytest.mark.asyncio
     async def test_query_filters_extra_artists(self):
@@ -671,12 +671,12 @@ class TestClassifyArtistFuzzy:
     def test_high_score_match_returns_keep(self, sample_index):
         """An artist that closely matches a library artist returns keep IDs."""
         matcher = MultiIndexMatcher(sample_index)
-        # "radiohead" is in library. A slight misspelling should still match.
-        by_artist = {"radioheed": [(999, "Radioheed", "OK Computer")]}
+        # "autechre" is in library. A slight misspelling should still match.
+        by_artist = {"autechrr": [(999, "Autechrr", "Confield")]}
         keep, prune, review, review_by = classify_artist_fuzzy(
-            "radioheed", by_artist["radioheed"], sample_index, matcher
+            "autechrr", by_artist["autechrr"], sample_index, matcher
         )
-        # "OK Computer" should match, so release 999 should be in keep
+        # "Confield" should match, so release 999 should be in keep
         assert 999 in keep
 
     def test_no_match_returns_prune(self, sample_index):
@@ -692,7 +692,7 @@ class TestClassifyArtistFuzzy:
     def test_compilation_artist_uses_title_matching(self, sample_index):
         """Compilation artists should use title-only matching."""
         matcher = MultiIndexMatcher(sample_index)
-        releases = [(777, "Various Artists", "Sugar Hill")]
+        releases = [(777, "Various Artists", "Nordic Roots")]
         keep, prune, review, review_by = classify_artist_fuzzy(
             "various artists", releases, sample_index, matcher
         )
@@ -718,10 +718,10 @@ class TestClassifyFuzzyBatch:
         """Batch processing aggregates results from multiple artists."""
         matcher = MultiIndexMatcher(sample_index)
         by_artist = {
-            "radioheed": [(101, "Radioheed", "OK Computer")],
+            "autechrr": [(101, "Autechrr", "Confield")],
             "zzyzx unknownband": [(102, "Zzyzx Unknownband", "Fake Album")],
         }
-        artists = ["radioheed", "zzyzx unknownband"]
+        artists = ["autechrr", "zzyzx unknownband"]
         keep, prune, review, review_by = classify_fuzzy_batch(
             artists, by_artist, sample_index, matcher
         )
@@ -802,8 +802,8 @@ class TestParallelMatchesSerial:
     def test_parallel_matches_serial(self, sample_index):
         """classify_all_releases should produce identical results regardless of threading."""
         releases = [
-            (1, "Radiohead", "OK Computer"),
-            (2, "Joy Division", "Unknown Pleasures"),
+            (1, "Autechre", "Confield"),
+            (2, "Father John Misty", "I Love You, Honeybear"),
             (3, "Aphex Twin", "Selected Ambient Works 85-92"),
             (4, "Nobody Real", "Fake Album XYZ"),
             (5, "Another Unknown", "Phantom Record"),
@@ -812,7 +812,7 @@ class TestParallelMatchesSerial:
 
         report = classify_all_releases(releases, sample_index, matcher)
 
-        # Exact-match artists (radiohead, joy division, aphex twin) should be KEEP
+        # Exact-match artists (autechre, father john misty, aphex twin) should be KEEP
         assert {1, 2, 3} <= report.keep_ids
         # Unknown artists should be PRUNE
         assert {4, 5} <= report.prune_ids
@@ -825,7 +825,7 @@ class TestProcessPoolFuzzyClassification:
         """ProcessPoolExecutor worker gives same results as direct classify_fuzzy_batch."""
         matcher = MultiIndexMatcher(sample_index)
         by_artist = {
-            "radioheed": [(999, "Radioheed", "OK Computer")],
+            "autechrr": [(999, "Autechrr", "Confield")],
             "zzyzx unknownband": [(888, "Zzyzx Unknownband", "Nonexistent Album")],
         }
         artists = list(by_artist.keys())
@@ -850,8 +850,8 @@ class TestProcessPoolFuzzyClassification:
         """Results from multiple process pool chunks aggregate to match a single batch."""
         matcher = MultiIndexMatcher(sample_index)
         by_artist = {
-            "radioheed": [(101, "Radioheed", "OK Computer")],
-            "joye division": [(102, "Joye Division", "Unknown Pleasures")],
+            "autechrr": [(101, "Autechrr", "Confield")],
+            "faather john misty": [(102, "Faather John Misty", "I Love You, Honeybear")],
             "zzyzx unknownband": [(103, "Zzyzx Unknownband", "Fake Album")],
             "aphex twins": [(104, "Aphex Twins", "Selected Ambient Works 85-92")],
         }
@@ -906,11 +906,11 @@ class TestPhase4Logging:
     def test_phase4_logs_throughput_and_eta(self, sample_index, caplog):
         """classify_all_releases Phase 4 logs include throughput and ETA."""
         releases = [
-            (1, "Radiohead", "OK Computer"),
-            (2, "Joy Division", "Unknown Pleasures"),
+            (1, "Autechre", "Confield"),
+            (2, "Father John Misty", "I Love You, Honeybear"),
             # Include artists that require fuzzy matching (not exact matches)
-            (4, "Radioheed", "OK Computer"),
-            (5, "Joye Division", "Unknown Pleasures"),
+            (4, "Autechrr", "Confield"),
+            (5, "Faather John Misty", "I Love You, Honeybear"),
         ]
         matcher = MultiIndexMatcher(sample_index)
 
@@ -1109,13 +1109,13 @@ class TestLibraryIndexFormat:
     def test_from_rows_3_tuples_builds_format_by_pair(self):
         """LibraryIndex built from 3-tuples has format_by_pair."""
         rows = [
-            ("Radiohead", "OK Computer", "CD"),
-            ("Radiohead", "OK Computer", "LP"),
-            ("Joy Division", "Unknown Pleasures", None),
+            ("Autechre", "Confield", "CD"),
+            ("Autechre", "Confield", "LP"),
+            ("Father John Misty", "I Love You, Honeybear", None),
         ]
         idx = LibraryIndex.from_rows(rows)
-        norm_radio = normalize_artist("Radiohead")
-        norm_ok = normalize_title("OK Computer")
+        norm_radio = normalize_artist("Autechre")
+        norm_ok = normalize_title("Confield")
         assert (norm_radio, norm_ok) in idx.format_by_pair
         assert idx.format_by_pair[(norm_radio, norm_ok)] == {"CD", "Vinyl"}
 
@@ -1134,16 +1134,16 @@ class TestLibraryIndexFormat:
 
     def test_from_rows_null_format(self):
         """NULL format produces None in format set."""
-        rows = [("Joy Division", "Closer", None)]
+        rows = [("Stereolab", "Dots and Loops", None)]
         idx = LibraryIndex.from_rows(rows)
-        norm_artist = normalize_artist("Joy Division")
-        norm_title = normalize_title("Closer")
+        norm_artist = normalize_artist("Father John Misty")
+        norm_title = normalize_title("Dots and Loops")
         formats = idx.format_by_pair.get((norm_artist, norm_title), set())
         assert None in formats
 
     def test_from_rows_2_tuples_backward_compatible(self):
         """2-tuple rows produce empty format_by_pair (backward-compatible)."""
-        rows = [("Radiohead", "OK Computer"), ("Joy Division", "Unknown Pleasures")]
+        rows = [("Autechre", "Confield"), ("Father John Misty", "I Love You, Honeybear")]
         idx = LibraryIndex.from_rows(rows)
         assert idx.format_by_pair == {}
 
@@ -1158,17 +1158,17 @@ class TestLibraryIndexFormat:
             "CREATE TABLE library (id INTEGER PRIMARY KEY, artist TEXT, title TEXT, format TEXT)"
         )
         cur.execute(
-            "INSERT INTO library (artist, title, format) VALUES ('Radiohead', 'OK Computer', 'CD')"
+            "INSERT INTO library (artist, title, format) VALUES ('Autechre', 'Confield', 'CD')"
         )
         cur.execute(
-            "INSERT INTO library (artist, title, format) VALUES ('Radiohead', 'OK Computer', 'LP')"
+            "INSERT INTO library (artist, title, format) VALUES ('Autechre', 'Confield', 'LP')"
         )
         conn.commit()
         conn.close()
 
         idx = LibraryIndex.from_sqlite(db_path)
-        norm_artist = normalize_artist("Radiohead")
-        norm_title = normalize_title("OK Computer")
+        norm_artist = normalize_artist("Autechre")
+        norm_title = normalize_title("Confield")
         assert (norm_artist, norm_title) in idx.format_by_pair
         assert idx.format_by_pair[(norm_artist, norm_title)] == {"CD", "Vinyl"}
 
@@ -1180,15 +1180,15 @@ class TestLibraryIndexFormat:
         conn = sqlite3.connect(str(db_path))
         cur = conn.cursor()
         cur.execute("CREATE TABLE library (id INTEGER PRIMARY KEY, artist TEXT, title TEXT)")
-        cur.execute("INSERT INTO library (artist, title) VALUES ('Radiohead', 'OK Computer')")
+        cur.execute("INSERT INTO library (artist, title) VALUES ('Autechre', 'Confield')")
         conn.commit()
         conn.close()
 
         idx = LibraryIndex.from_sqlite(db_path)
         assert idx.format_by_pair == {}
         # Should still have the pair in exact_pairs
-        norm_artist = normalize_artist("Radiohead")
-        norm_title = normalize_title("OK Computer")
+        norm_artist = normalize_artist("Autechre")
+        norm_title = normalize_title("Confield")
         assert (norm_artist, norm_title) in idx.exact_pairs
 
 
@@ -1197,47 +1197,47 @@ class TestFormatFilterClassification:
 
     def test_format_filter_keeps_matching_format(self):
         """KEEP release with matching format stays KEEP."""
-        rows = [("Radiohead", "OK Computer", "CD")]
+        rows = [("Autechre", "Confield", "CD")]
         idx = LibraryIndex.from_rows(rows)
         matcher = MultiIndexMatcher(idx)
-        releases = [(1, "Radiohead", "OK Computer", "CD")]
+        releases = [(1, "Autechre", "Confield", "CD")]
         report = classify_all_releases(releases, idx, matcher)
         assert 1 in report.keep_ids
 
     def test_format_filter_prunes_mismatching_format(self):
         """KEEP release with mismatching format is downgraded to PRUNE."""
-        rows = [("Radiohead", "OK Computer", "CD")]
+        rows = [("Autechre", "Confield", "CD")]
         idx = LibraryIndex.from_rows(rows)
         matcher = MultiIndexMatcher(idx)
         # Release is Cassette, but library only has CD
-        releases = [(1, "Radiohead", "OK Computer", "Cassette")]
+        releases = [(1, "Autechre", "Confield", "Cassette")]
         report = classify_all_releases(releases, idx, matcher)
         assert 1 in report.prune_ids
 
     def test_format_filter_keeps_null_release_format(self):
         """KEEP release with NULL format stays KEEP (graceful degradation)."""
-        rows = [("Radiohead", "OK Computer", "CD")]
+        rows = [("Autechre", "Confield", "CD")]
         idx = LibraryIndex.from_rows(rows)
         matcher = MultiIndexMatcher(idx)
-        releases = [(1, "Radiohead", "OK Computer", None)]
+        releases = [(1, "Autechre", "Confield", None)]
         report = classify_all_releases(releases, idx, matcher)
         assert 1 in report.keep_ids
 
     def test_format_filter_keeps_null_library_format(self):
         """KEEP release when library has no format data stays KEEP."""
         # 2-tuple rows: no format data
-        rows = [("Radiohead", "OK Computer")]
+        rows = [("Autechre", "Confield")]
         idx = LibraryIndex.from_rows(rows)
         matcher = MultiIndexMatcher(idx)
-        releases = [(1, "Radiohead", "OK Computer", "CD")]
+        releases = [(1, "Autechre", "Confield", "CD")]
         report = classify_all_releases(releases, idx, matcher)
         assert 1 in report.keep_ids
 
     def test_format_filter_null_release_format_with_library_formats(self):
         """Library has format data but release format is NULL: stays KEEP (graceful degradation)."""
-        rows = [("Radiohead", "OK Computer", "CD"), ("Radiohead", "OK Computer", "LP")]
+        rows = [("Autechre", "Confield", "CD"), ("Autechre", "Confield", "LP")]
         idx = LibraryIndex.from_rows(rows)
         matcher = MultiIndexMatcher(idx)
-        releases = [(1, "Radiohead", "OK Computer", None)]
+        releases = [(1, "Autechre", "Confield", None)]
         report = classify_all_releases(releases, idx, matcher)
         assert 1 in report.keep_ids

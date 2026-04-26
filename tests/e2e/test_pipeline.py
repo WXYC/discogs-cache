@@ -129,7 +129,7 @@ class TestPipeline:
 
         In the fixture data, releases 1001 (CD), 1002 (Vinyl), 1003 (Cassette)
         share master_id 500. Format-aware dedup keeps all three (different formats).
-        The library owns OK Computer on CD and LP (→Vinyl), so prune keeps
+        The library owns Confield on CD and LP (→Vinyl), so prune keeps
         1001 (CD) and 1002 (Vinyl) but removes 1003 (Cassette).
         """
         conn = self._connect()
@@ -158,11 +158,11 @@ class TestPipeline:
         """Releases matching the library are still present after pruning."""
         conn = self._connect()
         with conn.cursor() as cur:
-            # Kid A (3001) should survive both dedup and prune
+            # Amber (3001) should survive both dedup and prune
             cur.execute("SELECT count(*) FROM release WHERE id = 3001")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 1, "Release 3001 (Kid A) should still exist"
+        assert count == 1, "Release 3001 (Amber) should still exist"
 
     def test_master_id_column_persists_when_no_dedup(self) -> None:
         """master_id column persists when dedup copy-swap doesn't run.
@@ -270,7 +270,7 @@ class TestPipeline:
             cur.execute("SELECT count(*) FROM release_video WHERE release_id = 3001")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 1, "Release 3001 (Kid A) should have its video after pipeline"
+        assert count == 1, "Release 3001 (Amber) should have its video after pipeline"
 
     def test_release_video_cascade_delete_on_prune(self) -> None:
         """Videos for pruned release 5001 are removed via ON DELETE CASCADE."""
@@ -555,11 +555,11 @@ class TestPipelineWithCopyTo:
         """Target database has releases matching the library."""
         conn = psycopg.connect(self.target_url)
         with conn.cursor() as cur:
-            # Kid A (3001) should be in target
+            # Amber (3001) should be in target
             cur.execute("SELECT count(*) FROM release WHERE id = 3001")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 1, "Release 3001 (Kid A) should be in target"
+        assert count == 1, "Release 3001 (Amber) should be in target"
 
     def test_target_prune_releases_absent(self) -> None:
         """PRUNE releases should not be in the target."""
@@ -610,11 +610,11 @@ class TestPipelineWithCopyTo:
         """Videos for matched releases are copied to the target database."""
         conn = psycopg.connect(self.target_url)
         with conn.cursor() as cur:
-            # Release 3001 (Kid A) should be in target with its video
+            # Release 3001 (Amber) should be in target with its video
             cur.execute("SELECT count(*) FROM release_video WHERE release_id = 3001")
             count = cur.fetchone()[0]
         conn.close()
-        assert count == 1, "Release 3001 (Kid A) should have its video in target"
+        assert count == 1, "Release 3001 (Amber) should have its video in target"
 
     def test_target_pruned_release_has_no_videos(self) -> None:
         """Videos for pruned releases are not in the target database."""
