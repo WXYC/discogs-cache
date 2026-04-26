@@ -107,10 +107,10 @@ class TestCreateDatabase:
         """Immutable f_unaccent() wrapper is available and strips diacritics."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute("SELECT f_unaccent('Björk')")
+            cur.execute("SELECT f_unaccent('Nilüfer Yanya')")
             result = cur.fetchone()[0]
         conn.close()
-        assert result == "Bjork"
+        assert result == "Nilufer Yanya"
 
     def test_fk_constraints_with_cascade(self) -> None:
         """Child tables have ON DELETE CASCADE foreign keys to release."""

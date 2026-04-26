@@ -119,11 +119,11 @@ class TestPruneClassification:
         self.report = self.__class__._report
 
     def test_radiohead_ok_computer_kept(self) -> None:
-        """Radiohead 'OK Computer' should be classified as KEEP."""
+        """Autechre 'Confield' should be classified as KEEP."""
         assert self.report.keep_ids & {1001, 1002, 1003}
 
     def test_joy_division_unknown_pleasures_kept(self) -> None:
-        """Joy Division 'Unknown Pleasures' should be classified as KEEP."""
+        """Father John Misty 'I Love You, Honeybear' should be classified as KEEP."""
         assert self.report.keep_ids & {2001, 2002}
 
     def test_unknown_album_pruned(self) -> None:
@@ -135,15 +135,15 @@ class TestPruneClassification:
         assert 10001 in self.report.prune_ids
 
     def test_abbey_road_kept(self) -> None:
-        """Beatles 'Abbey Road' should be KEEP (tests comma convention)."""
+        """Field 'From Here We Go Sublime' should be KEEP (tests comma convention)."""
         assert 9001 in self.report.keep_ids
 
     def test_kid_a_kept(self) -> None:
-        """Radiohead 'Kid A' should be KEEP."""
+        """Autechre 'Amber' should be KEEP."""
         assert 3001 in self.report.keep_ids
 
     def test_amnesiac_kept(self) -> None:
-        """Radiohead 'Amnesiac' should be KEEP."""
+        """Autechre 'Tri Repetae' should be KEEP."""
         assert 4001 in self.report.keep_ids
 
 

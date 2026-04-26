@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate test fixture data for the discogs-cache test suite.
+"""Generate test fixture data for the discogs-etl test suite.
 
 Creates minimal CSV files, a SQLite library.db, and library_artists.txt
 that exercise the full pipeline: import, dedup, prune, and filter.
@@ -9,6 +9,11 @@ Run from the repo root:
 
 The generated files are checked into the repo so tests can run without
 regenerating them.  Re-run this script if you need to modify the fixture data.
+
+Artist data uses the canonical WXYC artist pool from
+wxyc-shared/src/test-utils/wxyc-example-data.json (canonicalArtistNames).
+WXYC is a freeform college radio station -- fixtures should reflect what
+the station actually plays, not mainstream rock defaults.
 """
 
 import csv
@@ -51,33 +56,33 @@ def create_release_csv() -> None:
         "format",
     ]
     rows = [
-        # Group 1: duplicate master_id 500 (Radiohead - OK Computer variants)
+        # Group 1: duplicate master_id 500 (Autechre - Confield variants)
         # Release 1001 has 5 tracks (UK), 1002 has 3 tracks (US), 1003 has 1 track (JP)
         # Dedup should keep 1002 (US country preference beats higher track count)
-        [1001, "Accepted", "OK Computer", "UK", "1997-06-16", "", "Correct", 500, "CD"],
-        [1002, "Accepted", "OK Computer", "US", "1997-07-01", "", "Correct", 500, "Vinyl"],
-        [1003, "Accepted", "OK Computer", "JP", "1997", "", "Correct", 500, "Cassette"],
-        # Group 2: duplicate master_id 600 (Joy Division - Unknown Pleasures)
-        # Release 2001 has 2 tracks (UK), 2002 has 4 tracks (DE) — no US release
+        [1001, "Accepted", "Confield", "UK", "2001-04-23", "", "Correct", 500, "CD"],
+        [1002, "Accepted", "Confield", "US", "2001-05-29", "", "Correct", 500, "Vinyl"],
+        [1003, "Accepted", "Confield", "JP", "2001", "", "Correct", 500, "Cassette"],
+        # Group 2: duplicate master_id 600 (Stereolab - Aluminum Tunes)
+        # Release 2001 has 2 tracks (UK), 2002 has 4 tracks (DE) -- no US release
         # Dedup should keep 2002 (most tracks, fallback when no US release)
-        [2001, "Accepted", "Unknown Pleasures", "UK", "1979-06-15", "", "Correct", 600, "LP"],
-        [2002, "Accepted", "Unknown Pleasures", "DE", "1979", "", "Correct", 600, "CD"],
+        [2001, "Accepted", "Aluminum Tunes", "UK", "1998-09-01", "", "Correct", 600, "LP"],
+        [2002, "Accepted", "Aluminum Tunes", "DE", "1998", "", "Correct", 600, "CD"],
         # No duplicate - unique master_id
-        [3001, "Accepted", "Kid A", "UK", "2000-10-02", "", "Correct", 700, "CD"],
+        [3001, "Accepted", "Amber", "UK", "1994-11-07", "", "Correct", 700, "CD"],
         # No master_id (should survive dedup)
-        [4001, "Accepted", "Amnesiac", "UK", "2001-06-05", "", "Correct", "", "CD"],
+        [4001, "Accepted", "Tri Repetae", "UK", "1995-11-13", "", "Correct", "", "CD"],
         # Release that won't match library (should be pruned)
         [5001, "Accepted", "Unknown Album", "US", "2020-01-01", "", "Correct", 800, "CD"],
         [5002, "Accepted", "Another Unknown", "US", "", "", "Correct", 900, "CD"],
         # Bad date format
-        [6001, "Accepted", "Homogenic", "UK", "Unknown", "", "Correct", 1000, "CD"],
+        [6001, "Accepted", "PAINLESS", "UK", "Unknown", "", "Correct", 1000, "CD"],
         # Missing title (should be skipped during import - required field)
         [7001, "Accepted", "", "US", "2023", "", "Correct", 1100, "CD"],
         # Compilation release
-        [8001, "Accepted", "Sugar Hill", "US", "1979", "", "Correct", 1200, "LP"],
+        [8001, "Accepted", "Nordic Roots: A Northside Collection", "US", "1998", "", "Correct", 1200, "CD"],
         # Various date format edge cases
-        [9001, "Accepted", "Abbey Road", "UK", "1969-09-26", "", "Correct", 1300, "LP"],
-        [9002, "Accepted", "Bridge Over Troubled Water", "US", "1970", "", "Correct", 1400, "LP"],
+        [9001, "Accepted", "From Here We Go Sublime", "UK", "2007-03-26", "", "Correct", 1300, "LP"],
+        [9002, "Accepted", "Duke Ellington & John Coltrane", "US", "1963", "", "Correct", 1400, "LP"],
         # Artist not in library
         [10001, "Accepted", "Some Random Album", "US", "2023-05-01", "", "Correct", 1500, "CD"],
         [10002, "Accepted", "Obscure Release", "DE", "2022", "", "Correct", 1600, "CD"],
@@ -86,7 +91,22 @@ def create_release_csv() -> None:
 
 
 def create_release_artist_csv() -> None:
-    """Create release_artist.csv linking releases to artists."""
+    """Create release_artist.csv linking releases to artists.
+
+    Artist ID convention (preserves the IDs used in the previous fixture):
+      1  Autechre               (was Radiohead)
+      2  Stereolab              (was Joy Division)
+      3  DJ Unknown             (filler)
+      4  Mystery Band           (filler)
+      5  Nilufer Yanya          (was Bjork; tests diacritic handling)
+      7  Various                (compilation marker)
+      8  Field, The             (was "Beatles, The"; tests "X, The" inversion)
+      9  Duke Ellington         (was Simon & Garfunkel; tests `&` multi-artist)
+     10  Random Artist X        (filler)
+     11  Obscure Band Y         (filler)
+     12  Some Producer          (extra credit)
+     13  John Coltrane          (second artist on release 9002, joined via `&`)
+    """
     headers = [
         "release_id",
         "artist_id",
@@ -98,27 +118,28 @@ def create_release_artist_csv() -> None:
         "role",
     ]
     rows = [
-        # Radiohead releases (match library)
-        [1001, 1, "Radiohead", 0, "", 1, "", ""],
-        [1002, 1, "Radiohead", 0, "", 1, "", ""],
-        [1003, 1, "Radiohead", 0, "", 1, "", ""],
-        [3001, 1, "Radiohead", 0, "", 1, "", ""],
-        [4001, 1, "Radiohead", 0, "", 1, "", ""],
-        # Joy Division releases (match library)
-        [2001, 2, "Joy Division", 0, "", 1, "", ""],
-        [2002, 2, "Joy Division", 0, "", 1, "", ""],
+        # Autechre releases (match library)
+        [1001, 1, "Autechre", 0, "", 1, "", ""],
+        [1002, 1, "Autechre", 0, "", 1, "", ""],
+        [1003, 1, "Autechre", 0, "", 1, "", ""],
+        [3001, 1, "Autechre", 0, "", 1, "", ""],
+        [4001, 1, "Autechre", 0, "", 1, "", ""],
+        # Stereolab releases (match library)
+        [2001, 2, "Stereolab", 0, "", 1, "", ""],
+        [2002, 2, "Stereolab", 0, "", 1, "", ""],
         # Unknown artists (won't match library)
         [5001, 3, "DJ Unknown", 0, "", 1, "", ""],
         [5002, 4, "Mystery Band", 0, "", 1, "", ""],
-        # Bjork (match library, tests accent handling)
-        [6001, 5, "Björk", 0, "", 1, "", ""],
+        # Nilufer Yanya (match library, tests diacritic handling: "Nilüfer Yanya" with U+00FC)
+        [6001, 5, "Nilüfer Yanya", 0, "", 1, "", ""],
         # Note: release 7001 has empty title and is skipped during import,
         # so no child table rows should reference it.
-        # Compilation
+        # Compilation -- bare V/A form (Discogs's canonical compilation artist)
         [8001, 7, "Various", 0, "", 1, "", ""],
-        # Beatles and Simon & Garfunkel (match library)
-        [9001, 8, "Beatles, The", 0, "", 1, "", ""],
-        [9002, 9, "Simon & Garfunkel", 0, "", 1, "", ""],
+        # Field, The (tests "X, The" inversion) and Duke Ellington & John Coltrane (multi-artist)
+        [9001, 8, "Field, The", 0, "", 1, "", ""],
+        [9002, 9, "Duke Ellington", 0, "", 1, "", "&"],
+        [9002, 13, "John Coltrane", 0, "", 2, "", ""],
         # Not in library
         [10001, 10, "Random Artist X", 0, "", 1, "", ""],
         [10002, 11, "Obscure Band Y", 0, "", 1, "", ""],
@@ -135,47 +156,47 @@ def create_release_track_csv() -> None:
     """
     headers = ["release_id", "sequence", "position", "title", "duration"]
     rows = [
-        # Release 1001 (OK Computer UK CD) - 5 tracks (most tracks, but not US)
-        [1001, 1, "1", "Airbag", "4:44"],
-        [1001, 2, "2", "Paranoid Android", "6:23"],
-        [1001, 3, "3", "Subterranean Homesick Alien", "4:27"],
-        [1001, 4, "4", "Exit Music (For a Film)", "4:24"],
-        [1001, 5, "5", "Let Down", "4:59"],
-        # Release 1002 (OK Computer US Vinyl) - 3 tracks (US wins despite fewer tracks)
-        [1002, 1, "A1", "Airbag", "4:44"],
-        [1002, 2, "A2", "Paranoid Android", "6:23"],
-        [1002, 3, "A3", "Subterranean Homesick Alien", "4:27"],
-        # Release 1003 (OK Computer JP Cassette) - 1 track
-        [1003, 1, "1", "Airbag", "4:44"],
-        # Release 2001 (Unknown Pleasures UK LP) - 2 tracks
-        [2001, 1, "A1", "Disorder", "3:29"],
-        [2001, 2, "A2", "Day of the Lords", "4:48"],
-        # Release 2002 (Unknown Pleasures DE CD) - 4 tracks (wins by track count, no US)
-        [2002, 1, "1", "Disorder", "3:29"],
-        [2002, 2, "2", "Day of the Lords", "4:48"],
-        [2002, 3, "3", "Candidate", "3:05"],
-        [2002, 4, "4", "Insight", "4:03"],
-        # Release 3001 (Kid A) - 2 tracks
-        [3001, 1, "1", "Everything In Its Right Place", "4:11"],
-        [3001, 2, "2", "Kid A", "4:44"],
-        # Release 4001 (Amnesiac, no master_id) - 2 tracks
-        [4001, 1, "1", "Packt Like Sardines in a Crushd Tin Box", "4:00"],
-        [4001, 2, "2", "Pyramid Song", "4:49"],
+        # Release 1001 (Confield UK CD) - 5 tracks (most tracks, but not US)
+        [1001, 1, "1", "VI Scose Poise", "4:51"],
+        [1001, 2, "2", "Cfern", "5:41"],
+        [1001, 3, "3", "Pen Expers", "5:54"],
+        [1001, 4, "4", "Sim Gishel", "6:46"],
+        [1001, 5, "5", "Parhelic Triangle", "8:18"],
+        # Release 1002 (Confield US Vinyl) - 3 tracks (US wins despite fewer tracks)
+        [1002, 1, "A1", "VI Scose Poise", "4:51"],
+        [1002, 2, "A2", "Cfern", "5:41"],
+        [1002, 3, "A3", "Pen Expers", "5:54"],
+        # Release 1003 (Confield JP Cassette) - 1 track
+        [1003, 1, "1", "VI Scose Poise", "4:51"],
+        # Release 2001 (Aluminum Tunes UK LP) - 2 tracks
+        [2001, 1, "A1", "Pop Quiz", "3:01"],
+        [2001, 2, "A2", "Fuses", "7:29"],
+        # Release 2002 (Aluminum Tunes DE CD) - 4 tracks (wins by track count, no US)
+        [2002, 1, "1", "Pop Quiz", "3:01"],
+        [2002, 2, "2", "Fuses", "7:29"],
+        [2002, 3, "3", "Iron Man", "4:34"],
+        [2002, 4, "4", "Le Coeur Et La Force", "6:11"],
+        # Release 3001 (Amber) - 2 tracks
+        [3001, 1, "1", "Foil", "4:11"],
+        [3001, 2, "2", "Montreal", "4:44"],
+        # Release 4001 (Tri Repetae, no master_id) - 2 tracks
+        [4001, 1, "1", "Dael", "8:39"],
+        [4001, 2, "2", "Clipper", "10:11"],
         # Release 5001 (Unknown Album) - 1 track
         [5001, 1, "1", "Unknown Track", "3:00"],
         # Release 5002 (Another Unknown) - 1 track
         [5002, 1, "1", "Mystery Track", "2:30"],
-        # Release 6001 (Homogenic) - 2 tracks
-        [6001, 1, "1", "Hunter", "4:15"],
-        [6001, 2, "2", "Joga", "5:05"],
-        # Release 8001 (Sugar Hill compilation) - 2 tracks
-        [8001, 1, "A1", "Rapper's Delight", "14:35"],
-        [8001, 2, "A2", "Apache", "5:35"],
-        # Release 9001 (Abbey Road) - 2 tracks
-        [9001, 1, "A1", "Come Together", "4:20"],
-        [9001, 2, "A2", "Something", "3:03"],
-        # Release 9002 (Bridge Over Troubled Water) - 1 track
-        [9002, 1, "A1", "Bridge Over Troubled Water", "4:52"],
+        # Release 6001 (PAINLESS) - 2 tracks
+        [6001, 1, "1", "the dealer", "4:15"],
+        [6001, 2, "2", "stabilise", "3:39"],
+        # Release 8001 (Nordic Roots compilation) - 2 tracks
+        [8001, 1, "1", "Slottet i Österrike", "4:18"],
+        [8001, 2, "2", "Bortglömda Toner", "5:35"],
+        # Release 9001 (From Here We Go Sublime) - 2 tracks
+        [9001, 1, "A1", "Over the Ice", "5:20"],
+        [9001, 2, "A2", "A Paw In My Face", "4:48"],
+        # Release 9002 (Duke Ellington & John Coltrane) - 1 track
+        [9002, 1, "A1", "In a Sentimental Mood", "4:19"],
         # Releases not in library
         [10001, 1, "1", "Random Track", "3:00"],
         [10002, 1, "1", "Obscure Track", "4:00"],
@@ -187,9 +208,9 @@ def create_release_track_artist_csv() -> None:
     """Create release_track_artist.csv for compilation track artists."""
     headers = ["release_id", "track_sequence", "artist_name"]
     rows = [
-        # Compilation tracks
-        [8001, 1, "Sugarhill Gang"],
-        [8001, 2, "Incredible Bongo Band"],
+        # Compilation tracks (release 8001 = Nordic Roots compilation)
+        [8001, 1, "Garmarna"],
+        [8001, 2, "Hedningarna"],
     ]
     write_csv("release_track_artist.csv", headers, rows)
 
@@ -198,33 +219,33 @@ def create_release_label_csv() -> None:
     """Create release_label.csv with label names for releases.
 
     Includes:
-    - Multiple labels per release (release 1001 has Parlophone and Capitol Records)
+    - Multiple labels per release (release 1001 has Warp and Arcola)
     - Labels for releases in the same dedup group (1001, 1002, 1003)
     - Labels for releases that won't match the library (5001, 5002)
     """
     headers = ["release_id", "label", "catno"]
     rows = [
-        # Radiohead - OK Computer (dedup group, master_id 500)
-        [1001, "Parlophone", "7243 8 55229 2 8"],
-        [1001, "Capitol Records", "CDP 7243 8 55229 2 8"],
-        [1002, "Capitol Records", "C1-55229"],
-        [1003, "EMI", "TOCP-50201"],
-        # Joy Division - Unknown Pleasures (dedup group, master_id 600)
-        [2001, "Factory Records", "FACT 10"],
-        [2002, "Qwest Records", "1-25840"],
+        # Autechre - Confield (dedup group, master_id 500)
+        [1001, "Warp Records", "WARPCD96"],
+        [1001, "Arcola", "ARC-WARPCD96"],
+        [1002, "Arcola", "ARC-CD96"],
+        [1003, "Beat Records", "BRC-50"],
+        # Stereolab - Aluminum Tunes (dedup group, master_id 600)
+        [2001, "Duophonic UHF Disks", "DUHF-08"],
+        [2002, "Drag City", "DC153"],
         # Unique releases
-        [3001, "Parlophone", "7243 5 27753 2 3"],
-        [4001, "Parlophone", "7243 5 32764 2 8"],
+        [3001, "Warp Records", "WARP30"],
+        [4001, "Warp Records", "WARP38"],
         # Won't match library
         [5001, "Unknown Label", "UNK-001"],
         [5002, "Mystery Records", "MYS-002"],
-        # Bjork
-        [6001, "One Little Indian", "TPLP 71 CD"],
+        # Nilufer Yanya
+        [6001, "ATO Records", "ATO0589"],
         # Compilation
-        [8001, "Sugar Hill Records", "SH-542"],
-        # Beatles, Simon & Garfunkel
-        [9001, "Apple Records", "PCS 7088"],
-        [9002, "Columbia", "KCS 9914"],
+        [8001, "NorthSide", "NSD6029"],
+        # Field, The; Duke Ellington & John Coltrane
+        [9001, "Kompakt", "KOMPAKT 144"],
+        [9002, "Impulse Records", "A-30"],
         # Not in library
         [10001, "Random Label", "RL-001"],
         [10002, "Obscure Label", "OL-002"],
@@ -243,17 +264,17 @@ def create_release_video_csv() -> None:
     """
     headers = ["release_id", "sequence", "src", "title", "duration", "embed"]
     rows = [
-        # OK Computer UK CD (1001) — survives pipeline prune
-        [1001, 1, "https://www.youtube.com/watch?v=abcdef01", "Airbag", 284, "true"],
-        [1001, 2, "https://www.youtube.com/watch?v=abcdef02", "Paranoid Android", 383, "true"],
-        # Unknown Pleasures UK LP (2001) — survives pipeline prune; embed=false
-        [2001, 1, "https://www.youtube.com/watch?v=uvwxyz01", "Disorder", 209, "false"],
-        # Kid A (3001) — survives pipeline prune
+        # Confield UK CD (1001) — survives pipeline prune
+        [1001, 1, "https://www.youtube.com/watch?v=abcdef01", "VI Scose Poise", 291, "true"],
+        [1001, 2, "https://www.youtube.com/watch?v=abcdef02", "Cfern", 341, "true"],
+        # Aluminum Tunes UK LP (2001) — survives pipeline prune; embed=false
+        [2001, 1, "https://www.youtube.com/watch?v=uvwxyz01", "Pop Quiz", 181, "false"],
+        # Amber (3001) — survives pipeline prune
         [
             3001,
             1,
             "https://www.youtube.com/watch?v=ghijkl01",
-            "Everything In Its Right Place",
+            "Foil",
             251,
             "true",
         ],
@@ -287,18 +308,18 @@ def create_library_labels_csv() -> None:
     used to influence dedup ranking via --library-labels.
 
     The existing release_label.csv has Discogs label data per release:
-      - 1001: Parlophone, Capitol Records; 1002: Capitol Records; 1003: EMI
-      - 2001: Factory Records; 2002: Qwest Records
+      - 1001: Warp Records, Arcola; 1002: Arcola; 1003: Beat Records
+      - 2001: Duophonic UHF Disks; 2002: Drag City
 
-    This fixture says WXYC owns the Parlophone pressing of OK Computer
-    and the Factory Records pressing of Unknown Pleasures, which causes
+    This fixture says WXYC owns the Warp Records pressing of Confield
+    and the Duophonic UHF Disks pressing of Aluminum Tunes, which causes
     label-aware dedup to prefer 1001 over 1002 and 2001 over 2002
     (overriding the default track-count ranking).
     """
     headers = ["artist_name", "release_title", "label_name"]
     rows = [
-        ["Joy Division", "Unknown Pleasures", "Factory Records"],
-        ["Radiohead", "OK Computer", "Parlophone"],
+        ["Stereolab", "Aluminum Tunes", "Duophonic UHF Disks"],
+        ["Autechre", "Confield", "Warp Records"],
     ]
     write_csv("library_labels.csv", headers, rows)
 
@@ -310,18 +331,18 @@ def create_label_hierarchy_csv() -> None:
     Used to test sublabel resolution during label-aware dedup.
 
     The existing release_label.csv has:
-      - 1001: Parlophone, Capitol Records
-      - 1002: Capitol Records
-      - 1003: EMI
-    The library_labels.csv says WXYC owns "Parlophone" pressing.
+      - 1001: Warp Records, Arcola
+      - 1002: Arcola
+      - 1003: Beat Records
+    The library_labels.csv says WXYC owns "Warp Records" pressing.
 
-    With this hierarchy, "EMI" (parent) matches releases labeled "Parlophone"
-    or "Capitol Records" (sublabels), and vice versa.
+    With this hierarchy, "Warp Records" (parent) matches releases labeled
+    "Arcola" (sublabel), and vice versa.
     """
     headers = ["label_id", "label_name", "parent_label_id", "parent_label_name"]
     rows = [
-        [2, "Parlophone", 1, "EMI"],
-        [3, "Capitol Records", 1, "EMI"],
+        [2, "Arcola", 1, "Warp Records"],
+        [3, "Duophonic UHF Disks", 4, "Duophonic"],
     ]
     write_csv("label_hierarchy.csv", headers, rows)
 
@@ -347,31 +368,50 @@ def create_library_db() -> None:
         )
     """)
 
-    # Library entries that should produce KEEP decisions
+    # Library entries that should produce KEEP decisions.
+    # Artist names use the canonical WXYC pool (canonicalArtistNames in
+    # wxyc-shared/src/test-utils/wxyc-example-data.json) plus controlled
+    # variants for specific test cases:
+    #   - "Field, The"            -- "X, The" inversion of canonical "The Field"
+    #   - "Various Artists ..."   -- compilation markers (4 V/A shapes observed
+    #                                in the production catalog)
+    #   - "Nilüfer Yanya"         -- diacritic-bearing canonical artist
     entries = [
-        ("Radiohead", "OK Computer", "CD"),
-        ("Radiohead", "OK Computer", "LP"),  # library owns both CD and LP
-        ("Radiohead", "Kid A", "CD"),
-        ("Radiohead", "Amnesiac", "CD"),
-        ("Joy Division", "Unknown Pleasures", "LP"),
-        ("Joy Division", "Closer", None),  # some entries have no format
+        # Multi-format same album (CD + LP for one Stereolab album)
+        ("Stereolab", "Aluminum Tunes", "CD"),
+        ("Stereolab", "Aluminum Tunes", "LP"),  # library owns both formats
+        # Multi-album per artist + null format (Stereolab Dots and Loops)
+        ("Stereolab", "Dots and Loops", None),  # some entries have no format
+        # Multi-album per artist (Autechre catalog)
+        ("Autechre", "Confield", "CD"),
+        ("Autechre", "Amber", "CD"),
+        ("Autechre", "Tri Repetae", "CD"),
+        # Already-canonical artists from the original fixture (kept)
         ("Aphex Twin", "Selected Ambient Works 85-92", "CD"),
-        ("Beatles, The", "Abbey Road", "LP"),
-        ("Simon & Garfunkel", "Bridge Over Troubled Water", "LP"),
-        ("Björk", "Homogenic", "CD"),
-        # Compilation entry (Various prefix triggers compilation handling)
-        ("Various Artists - Compilations", "Sugar Hill", "LP"),
-        # Extra entries to make the index realistic
-        ("Talking Heads", "Remain in Light", "LP"),
-        ("Sonic Youth", "Daydream Nation", "LP"),
         ("Pixies", "Doolittle", "CD"),
-        ("My Bloody Valentine", "Loveless", "LP"),
-        ("Neutral Milk Hotel", "In the Aeroplane Over the Sea", "LP"),
-        ("Pavement", "Slanted and Enchanted", "CD"),
-        ("Guided By Voices", "Bee Thousand", "LP"),
-        ("Built to Spill", "Perfect From Now On", "CD"),
-        ("Modest Mouse", "The Lonesome Crowded West", "LP"),
-        ("Sleater-Kinney", "Dig Me Out", "CD"),
+        # "X, The" inversion test (canonical form is "The Field")
+        ("Field, The", "From Here We Go Sublime", "LP"),
+        # Multi-artist with `&` separator (canonical individuals: Duke Ellington
+        # and John Coltrane -- the joint form is the WXYC catalog string)
+        ("Duke Ellington & John Coltrane", "Duke Ellington & John Coltrane", "LP"),
+        # Diacritic-bearing canonical artist (U+00FC)
+        ("Nilüfer Yanya", "PAINLESS", "CD"),
+        # Compilation entries -- the four V/A shapes observed in the
+        # production WXYC catalog (tubafrenzy + staging Postgres dump):
+        #   bare, genre + alphabetical sub-bucket, single-segment genre,
+        #   bracketed group form. All trigger is_compilation_artist() via
+        #   the substring match on "various".
+        ("Various Artists", "Nordic Roots: A Northside Collection", "CD"),
+        ("Various Artists - Rock - A", "All Tomorrow's Parties 5.0", "LP"),
+        ("Various Artists - Hiphop", "Stones Throw Ten Years", "CD"),
+        ("Various Artists [group]", "Sublime Frequencies: Radio Pyongyang", "LP"),
+        # Filler entries from canonical pool (one each, mixed genres)
+        ("Cat Power", "Moon Pix", "LP"),
+        ("Jessica Pratt", "On Your Own Love Again", "LP"),
+        ("Father John Misty", "I Love You, Honeybear", "LP"),
+        ("Buck Meek", "Gasoline", "LP"),
+        ("Sessa", "Pequena Vertigem de Amor", "LP"),
+        ("Rochelle Jordan", "Through the Wall", "CD"),
     ]
 
     cur.executemany("INSERT INTO library (artist, title, format) VALUES (?, ?, ?)", entries)
@@ -383,26 +423,31 @@ def create_library_db() -> None:
 def create_library_artists_txt() -> None:
     """Create library_artists.txt for filter_csv.py testing.
 
-    One artist name per line, matching the library.db entries.
+    One artist name per line. Mirrors what production tooling
+    (`wxyc-enrich-library-artists` from wxyc-catalog) actually emits when
+    derived from library.db:
+
+    - Compilation artists (Various Artists, etc.) are excluded via
+      `is_compilation_artist()`.
+    - Multi-artist names joined by `&`/`,`/`/`/` + ` are split via
+      `split_artist_name_contextual()`. So "Duke Ellington & John Coltrane"
+      becomes two distinct lines.
     """
     artists = [
-        "Radiohead",
-        "Joy Division",
+        "Stereolab",
+        "Autechre",
         "Aphex Twin",
-        "The Beatles",
-        "Simon & Garfunkel",
-        "Björk",
-        "Various Artists",
-        "Talking Heads",
-        "Sonic Youth",
         "Pixies",
-        "My Bloody Valentine",
-        "Neutral Milk Hotel",
-        "Pavement",
-        "Guided By Voices",
-        "Built to Spill",
-        "Modest Mouse",
-        "Sleater-Kinney",
+        "Field, The",  # "X, The" inversion test variant (canonical: "The Field")
+        "Duke Ellington",
+        "John Coltrane",
+        "Nilüfer Yanya",
+        "Cat Power",
+        "Jessica Pratt",
+        "Father John Misty",
+        "Buck Meek",
+        "Sessa",
+        "Rochelle Jordan",
     ]
 
     path = FIXTURE_DIR / "library_artists.txt"

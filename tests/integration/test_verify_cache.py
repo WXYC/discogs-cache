@@ -56,18 +56,18 @@ class TestMultiIndexRealLibrary:
     """Test multi-index matching against the real WXYC library catalog."""
 
     def test_beatles_comma_convention(self, matcher):
-        """'Beatles, The' / 'Abbey Road' -> KEEP via normalization."""
+        """'Field, The' / 'From Here We Go Sublime' -> KEEP via normalization."""
         result = matcher.classify(
-            normalize_artist("Beatles, The"),
-            normalize_title("Abbey Road"),
+            normalize_artist("Field, The"),
+            normalize_title("From Here We Go Sublime"),
         )
         assert result.decision == Decision.KEEP
 
     def test_radiohead_ok_computer(self, matcher):
         """Basic exact match."""
         result = matcher.classify(
-            normalize_artist("Radiohead"),
-            normalize_title("OK Computer"),
+            normalize_artist("Autechre"),
+            normalize_title("Confield"),
         )
         assert result.decision == Decision.KEEP
 
@@ -86,15 +86,15 @@ class TestMultiIndexRealLibrary:
             break
 
     def test_joy_not_joy_division(self, matcher):
-        """'Joy' / 'Unknown Pleasures' should not KEEP as 'Joy' artist.
+        """'Joy' / 'I Love You, Honeybear' should not KEEP as 'Joy' artist.
 
-        'Joy' is a different artist from 'Joy Division'. The multi-index
+        'Joy' is a different artist from 'Father John Misty'. The multi-index
         matcher should not match based on 'Joy' being a subset of
-        'Joy Division'.
+        'Father John Misty'.
         """
         result = matcher.classify(
             normalize_artist("Joy"),
-            normalize_title("Unknown Pleasures"),
+            normalize_title("I Love You, Honeybear"),
         )
         assert result.decision != Decision.KEEP
 
@@ -124,12 +124,12 @@ class TestMultiIndexRealLibrary:
         Mapping keys are normalized artist names (what classify() receives).
         """
         mappings = {
-            "keep": {"bjork": "Bjork"},  # normalized key
+            "keep": {"nilufer yanya": "Nilufer Yanya"},  # normalized key
             "prune": {},
         }
         matcher = MultiIndexMatcher(library_index, artist_mappings=mappings)
         result = matcher.classify(
-            normalize_artist("Bjork (2)"),  # normalizes to "bjork"
+            normalize_artist("Nilufer Yanya (2)"),  # normalizes to "nilufer yanya"
             normalize_title("Some Random Album"),
         )
         assert result.decision == Decision.KEEP

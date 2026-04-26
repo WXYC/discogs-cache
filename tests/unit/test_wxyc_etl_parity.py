@@ -72,7 +72,7 @@ class TestNormalizeArtistNameParity:
         [
             ("Duke Ellington", "duke ellington"),
             ("STEREOLAB", "stereolab"),
-            ("Björk", "bjork"),
+            ("Nilüfer Yanya", "nilufer yanya"),
             ("  Cat Power  ", "cat power"),
             ("Chuquimamani-Condori", "chuquimamani-condori"),
         ],

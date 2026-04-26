@@ -253,10 +253,10 @@ class TestFullPipelineCrossRepo:
         """f_unaccent() function is available for accent-insensitive search."""
         conn = self._connect()
         with conn.cursor() as cur:
-            cur.execute("SELECT f_unaccent('Bjork')")
+            cur.execute("SELECT f_unaccent('Nilufer Yanya')")
             result = cur.fetchone()[0]
         conn.close()
-        assert result == "Bjork"
+        assert result == "Nilufer Yanya"
 
     def test_trigram_search_works(self) -> None:
         """pg_trgm fuzzy search returns results against pipeline data.
@@ -270,11 +270,11 @@ class TestFullPipelineCrossRepo:
                 "SELECT ra.artist_name FROM release_artist ra "
                 "WHERE similarity(lower(f_unaccent(ra.artist_name)), "
                 "lower(f_unaccent(%(name)s))) > 0.3 LIMIT 5",
-                {"name": "Radiohead"},
+                {"name": "Autechre"},
             )
             results = cur.fetchall()
         conn.close()
-        assert len(results) > 0, "Trigram search for 'Radiohead' returned no results"
+        assert len(results) > 0, "Trigram search for 'Autechre' returned no results"
 
     def test_fuzzy_search_handles_typos(self) -> None:
         """pg_trgm search finds results even with typos in the query."""
@@ -284,13 +284,13 @@ class TestFullPipelineCrossRepo:
                 "SELECT ra.artist_name FROM release_artist ra "
                 "WHERE similarity(lower(f_unaccent(ra.artist_name)), "
                 "lower(f_unaccent(%(name)s))) > 0.2 LIMIT 5",
-                {"name": "Radiohed"},
+                {"name": "Autechrr"},
             )
             results = cur.fetchall()
         conn.close()
         artist_names = [r[0] for r in results]
-        assert any("Radiohead" in name for name in artist_names), (
-            f"Typo search for 'Radiohed' didn't find Radiohead, got {artist_names}"
+        assert any("Autechre" in name for name in artist_names), (
+            f"Typo search for 'Autechrr' didn't find Autechre, got {artist_names}"
         )
 
     def test_track_search_works(self) -> None:
@@ -332,15 +332,15 @@ class TestFullPipelineCrossRepo:
             pool = await asyncpg.create_pool(db_url)
             try:
                 service = DiscogsCacheService(pool)
-                results = await service.search_releases(artist="Radiohead")
+                results = await service.search_releases(artist="Autechre")
                 return results
             finally:
                 await pool.close()
 
         results = asyncio.get_event_loop().run_until_complete(_run())
-        assert len(results) > 0, "LML search for 'Radiohead' returned no results"
-        assert any("OK Computer" in r["title"] for r in results), (
-            f"Expected 'OK Computer' in results, got {[r['title'] for r in results]}"
+        assert len(results) > 0, "LML search for 'Autechre' returned no results"
+        assert any("Confield" in r["title"] for r in results), (
+            f"Expected 'Confield' in results, got {[r['title'] for r in results]}"
         )
 
     @pytest.mark.skipif(
@@ -356,14 +356,14 @@ class TestFullPipelineCrossRepo:
             try:
                 service = DiscogsCacheService(pool)
                 results = await service.search_releases_by_track(
-                    track="Paranoid Android", artist="Radiohead"
+                    track="VI Scose Poise", artist="Autechre"
                 )
                 return results
             finally:
                 await pool.close()
 
         results = asyncio.get_event_loop().run_until_complete(_run())
-        assert len(results) > 0, "LML track search for 'Paranoid Android' returned no results"
+        assert len(results) > 0, "LML track search for 'VI Scose Poise' returned no results"
 
 
 class TestXmlConverterToPipelineIntegration:
@@ -449,7 +449,7 @@ class TestXmlConverterToPipelineIntegration:
             cur.execute("SELECT DISTINCT title FROM release WHERE title IS NOT NULL")
             titles = {row[0] for row in cur.fetchall()}
         conn.close()
-        assert "OK Computer" in titles, f"'OK Computer' not found in {titles}"
+        assert "Confield" in titles, f"'Confield' not found in {titles}"
 
     def test_artist_data_imported(self) -> None:
         """release_artist table has data after converter -> pipeline import.
@@ -474,7 +474,7 @@ class TestXmlConverterToPipelineIntegration:
             cur.execute("SELECT DISTINCT artist_name FROM release_artist WHERE extra = 0")
             artists = {row[0] for row in cur.fetchall()}
         conn.close()
-        assert "Radiohead" in artists, f"Radiohead not found in {artists}"
+        assert "Autechre" in artists, f"Autechre not found in {artists}"
 
     def test_track_titles_preserved(self) -> None:
         """Track titles survive the full conversion chain."""
@@ -484,4 +484,4 @@ class TestXmlConverterToPipelineIntegration:
             tracks = {row[0] for row in cur.fetchall()}
         conn.close()
         assert "Airbag" in tracks, f"'Airbag' not found in {tracks}"
-        assert "Paranoid Android" in tracks, f"'Paranoid Android' not found in {tracks}"
+        assert "VI Scose Poise" in tracks, f"'VI Scose Poise' not found in {tracks}"

@@ -36,17 +36,23 @@ class TestNormalizeArtist:
     @pytest.mark.parametrize(
         "raw, expected",
         [
-            ("Radiohead", "radiohead"),
-            ("  Radiohead  ", "radiohead"),
-            ("RADIOHEAD", "radiohead"),
+            ("Autechre", "autechre"),
+            ("  Autechre  ", "autechre"),
+            ("AUTECHRE", "autechre"),
             ("  Mixed Case  ", "mixed case"),
             ("", ""),
-            ("Björk", "bjork"),
-            ("Sigur Rós", "sigur ros"),
-            ("Motörhead", "motorhead"),
-            ("Hüsker Dü", "husker du"),
-            ("Café Tacvba", "cafe tacvba"),
-            ("Zoé", "zoe"),
+            # Diacritic regression cases. Inputs are drawn from the WXYC
+            # canonical artist pool where possible (Csillagrablók, Hermanos
+            # Gutiérrez, Nilüfer Yanya), then supplemented with synthetic
+            # cases for diacritic categories the canonical pool doesn't
+            # cover (e.g., a-grave, n-tilde) so the normalizer's Unicode
+            # handling stays exercised across the Latin block.
+            ("Csillagrablók", "csillagrablok"),
+            ("Hermanos Gutiérrez", "hermanos gutierrez"),
+            ("Nilüfer Yanya", "nilufer yanya"),
+            ("Père Ubu", "pere ubu"),
+            ("Señor Coconut", "senor coconut"),
+            ("Façade", "facade"),
         ],
         ids=[
             "lowercase",
@@ -54,12 +60,12 @@ class TestNormalizeArtist:
             "all-caps",
             "mixed-case-strip",
             "empty",
-            "bjork",
-            "sigur-ros",
-            "motorhead",
-            "husker-du",
-            "cafe-tacvba",
-            "zoe",
+            "csillagrablok",
+            "hermanos-gutierrez",
+            "nilufer-yanya",
+            "pere-ubu",
+            "senor-coconut",
+            "facade",
         ],
     )
     def test_normalize(self, raw: str, expected: str) -> None:
@@ -87,10 +93,10 @@ class TestLoadLibraryArtists:
         for name in artists:
             assert name == name.lower().strip()
 
-    def test_radiohead_in_set(self) -> None:
+    def test_canonical_artist_in_set(self) -> None:
         path = FIXTURES_DIR / "library_artists.txt"
         artists = load_library_artists(path)
-        assert "radiohead" in artists
+        assert "autechre" in artists
 
     def test_blank_lines_excluded(self, tmp_path: Path) -> None:
         txt = tmp_path / "artists.txt"
@@ -109,9 +115,9 @@ class TestFindMatchingReleaseIds:
 
     def test_finds_matching_ids(self) -> None:
         release_artist_path = FIXTURES_DIR / "csv" / "release_artist.csv"
-        library_artists = {"radiohead"}
+        library_artists = {"autechre"}
         ids = find_matching_release_ids(release_artist_path, library_artists)
-        # Radiohead is on releases 1001, 1002, 1003, 3001, 4001
+        # Autechre is on releases 1001, 1002, 1003, 3001, 4001
         assert ids == {1001, 1002, 1003, 3001, 4001}
 
     def test_no_matches(self) -> None:
@@ -122,7 +128,7 @@ class TestFindMatchingReleaseIds:
 
     def test_multiple_artists(self) -> None:
         release_artist_path = FIXTURES_DIR / "csv" / "release_artist.csv"
-        library_artists = {"radiohead", "joy division"}
+        library_artists = {"autechre", "stereolab"}
         ids = find_matching_release_ids(release_artist_path, library_artists)
         assert {1001, 1002, 1003, 3001, 4001, 2001, 2002}.issubset(ids)
 

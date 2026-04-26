@@ -50,7 +50,7 @@ SAMPLE_LIBRARY_ROWS = [
     ("Autechre", "Confield", "CD"),
     ("Prince Jammy", "...Destroys The Space Invaders", "LP"),
     ("Sessa", "Pequena Vertigem de Amor", "LP"),
-    ("Various Artists", "Sugar Hill", None),
+    ("Various Artists", "Nordic Roots", None),
     ("Soundtracks - S", "Lost In Translation", None),
 ]
 
@@ -178,7 +178,7 @@ class TestBatchClassifyCompilationHandling:
         """Compilation releases with matching titles are KEEP in both paths."""
         matcher = MultiIndexMatcher(library_index)
         releases = [
-            (20, "Various Artists", "Sugar Hill"),
+            (20, "Various Artists", "Nordic Roots"),
             (21, "Various Artists", "Unknown Compilation XYZ"),
         ]
 
