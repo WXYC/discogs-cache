@@ -3,6 +3,7 @@
 Tests that external dependency failures are handled gracefully:
 - UNLOGGED toggle edge cases (non-existent tables, already-toggled)
 - Dedup connection loss simulation
+- Dedup mid-ANALYZE / mid-copy-swap connection termination
 - Import COPY interruption (malformed data, partial failures)
 
 All tests require PostgreSQL and are marked with @pytest.mark.postgres.
@@ -12,6 +13,8 @@ Uses WXYC example artists for fixture data.
 from __future__ import annotations
 
 import importlib.util
+import threading
+import time
 from pathlib import Path
 
 import psycopg
@@ -92,6 +95,7 @@ def _apply_schema(db_url: str) -> None:
     conn = psycopg.connect(db_url, autocommit=True)
     with conn.cursor() as cur:
         cur.execute(SCHEMA_DIR.joinpath("create_database.sql").read_text())
+        cur.execute(SCHEMA_DIR.joinpath("create_functions.sql").read_text())
     conn.close()
 
 
@@ -398,3 +402,318 @@ class TestVacuumEdgeCases:
         _drop_all_tables(self.db_url)
         with pytest.raises((psycopg.Error, RuntimeError, OSError)):
             run_pipeline.run_vacuum(self.db_url)
+
+
+# ---------------------------------------------------------------------------
+# Dedup mid-operation connection termination
+# ---------------------------------------------------------------------------
+
+
+def _seed_dedup_workload(db_url: str, n_releases: int = 50_000) -> None:
+    """Populate the release table with enough rows that dedup copy-swap takes
+    long enough to race a pg_terminate_backend.
+
+    Uses canonical WXYC artists. Each release has a master_id derived from
+    (id // 2), so every pair of consecutive rows form duplicates that dedup
+    must collapse.
+    """
+    artists = [
+        "Juana Molina",
+        "Stereolab",
+        "Cat Power",
+        "Jessica Pratt",
+        "Chuquimamani-Condori",
+        "Duke Ellington & John Coltrane",
+        "Father John Misty",
+        "Autechre",
+        "Nilüfer Yanya",
+        "Hermanos Gutiérrez",
+    ]
+    titles = [
+        "DOGA",
+        "Aluminum Tunes",
+        "Moon Pix",
+        "On Your Own Love Again",
+        "Edits",
+        "In a Sentimental Mood",
+        "I Love You, Honeybear",
+        "Confield",
+        "Painless",
+        "El Bueno y el Malo",
+    ]
+
+    conn = psycopg.connect(db_url)
+    with conn.cursor() as cur:
+        with cur.copy("COPY release (id, title, country, master_id, format) FROM STDIN") as copy:
+            for i in range(n_releases):
+                rid = 10_000 + i
+                title = titles[i % len(titles)]
+                country = "US" if (i % 3 == 0) else "AR"
+                master_id = 50_000 + (i // 2)
+                fmt = "LP" if (i % 2 == 0) else "CD"
+                copy.write_row((rid, title, country, master_id, fmt))
+
+        with cur.copy(
+            "COPY release_artist (release_id, artist_id, artist_name, extra) FROM STDIN"
+        ) as copy:
+            for i in range(n_releases):
+                rid = 10_000 + i
+                artist_id = 100 + (i % len(artists))
+                artist_name = artists[i % len(artists)]
+                copy.write_row((rid, artist_id, artist_name, 0))
+    conn.commit()
+    conn.close()
+
+
+def _build_dedup_conn(db_url: str) -> psycopg.Connection:
+    """Open a non-autocommit connection used to drive dedup copy-swap."""
+    return psycopg.connect(db_url)
+
+
+def _terminate_when(
+    db_url: str,
+    target_pid: int,
+    pattern_substrings: tuple[str, ...],
+    max_polls: int = 400,
+    poll_interval_s: float = 0.005,
+) -> threading.Event:
+    """Spawn a thread that polls pg_stat_activity for ``target_pid`` and
+    pg_terminate_backend()s it as soon as one of ``pattern_substrings`` (case
+    insensitive) appears in the running query. Returns an Event that is set
+    when termination has fired (whether or not the pattern matched).
+    """
+    fired = threading.Event()
+
+    def _runner() -> None:
+        admin = psycopg.connect(db_url, autocommit=True)
+        try:
+            for _ in range(max_polls):
+                with admin.cursor() as cur:
+                    cur.execute(
+                        "SELECT query FROM pg_stat_activity WHERE pid = %s",
+                        (target_pid,),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        q = row[0].upper()
+                        if any(p.upper() in q for p in pattern_substrings):
+                            cur.execute("SELECT pg_terminate_backend(%s)", (target_pid,))
+                            fired.set()
+                            return
+                time.sleep(poll_interval_s)
+            # Timed out waiting for the pattern. Fire anyway so the test
+            # doesn't hang waiting for the dedup thread to return.
+            with admin.cursor() as cur:
+                cur.execute("SELECT pg_terminate_backend(%s)", (target_pid,))
+        finally:
+            admin.close()
+            fired.set()
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    return fired
+
+
+class TestDedupTerminatedMidOperation:
+    """Verify dedup copy-swap and ANALYZE handle mid-operation backend kills.
+
+    These tests populate a moderately-large dataset (~50K rows) so that the
+    dedup CREATE TABLE AS / ALTER TABLE RENAME phase or an ANALYZE on the
+    populated table takes long enough that a sibling thread can win the race
+    against pg_terminate_backend(). Both rolling back cleanly AND leaving the
+    database in a state that a subsequent dedup rerun can recover from are
+    valid outcomes; the cleanup case is already covered in
+    tests/integration/test_dedup.py::TestDedupCopySwapAbortCleanup.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _set_up(self, db_url):
+        """Apply schema and seed a workload large enough to win the race."""
+        self.db_url = db_url
+        _drop_all_tables(db_url)
+        _apply_schema(db_url)
+        _seed_dedup_workload(db_url, n_releases=50_000)
+
+    def test_terminated_dedup_during_copy_swap_leaves_consistent_state(self) -> None:
+        """Killing dedup mid-CREATE-TABLE-AS / mid-RENAME does not corrupt release.
+
+        The dedup connection runs ensure_dedup_ids + copy_table + swap_tables
+        in a background thread. Meanwhile the main thread polls pg_stat_activity
+        and pg_terminate_backend()s the dedup backend as soon as it sees a
+        CREATE TABLE AS or ALTER TABLE ... RENAME running. After the kill we
+        verify (a) dedup raised, (b) the original release table still contains
+        all 50_000 rows OR has been atomically swapped to a smaller deduped
+        copy, and (c) a subsequent dedup rerun completes successfully and
+        cleans up any dangling new_release artifacts.
+        """
+        dedup_conn = _build_dedup_conn(self.db_url)
+        dedup_pid = dedup_conn.info.backend_pid
+
+        # Pre-create dedup_delete_ids in the dedup connection so the long
+        # operation we race against is the copy-swap phase, not ensure_dedup_ids.
+        dedup_releases.ensure_dedup_ids(dedup_conn)
+        dedup_conn.commit()
+
+        result: dict = {"raised": False, "exc": None}
+
+        def _drive_copy_swap() -> None:
+            try:
+                # Run the full copy-swap sequence on the base tables. We use
+                # a fresh connection per call (mirroring scripts/dedup_releases
+                # main()'s autocommit pattern is unnecessary here -- the kill
+                # will happen during one of these statements).
+                dedup_releases.copy_table(
+                    dedup_conn,
+                    "release",
+                    "new_release",
+                    "id, title, release_year, country, artwork_url, released, format",
+                    "id",
+                )
+                dedup_releases.copy_table(
+                    dedup_conn,
+                    "release_artist",
+                    "new_release_artist",
+                    "release_id, artist_id, artist_name, extra, role",
+                    "release_id",
+                )
+                with dedup_conn.cursor() as cur:
+                    cur.execute(
+                        "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS "
+                        "fk_release_artist_release"
+                    )
+                dedup_releases.swap_tables(dedup_conn, "release", "new_release")
+                dedup_releases.swap_tables(dedup_conn, "release_artist", "new_release_artist")
+            except Exception as exc:  # noqa: BLE001 -- we want to record any failure
+                result["raised"] = True
+                result["exc"] = exc
+
+        terminator = _terminate_when(
+            self.db_url,
+            dedup_pid,
+            pattern_substrings=("CREATE TABLE", "ALTER TABLE", "DROP TABLE"),
+        )
+
+        worker = threading.Thread(target=_drive_copy_swap, daemon=True)
+        worker.start()
+        worker.join(timeout=60)
+        assert not worker.is_alive(), "Dedup worker thread hung after kill"
+
+        terminator.wait(timeout=30)
+        assert terminator.is_set(), "Terminator thread did not fire"
+
+        try:
+            dedup_conn.close()
+        except Exception:
+            pass
+
+        if not result["raised"]:
+            pytest.skip(
+                "Dedup completed before pg_terminate_backend fired; "
+                "cannot exercise mid-operation kill on this machine"
+            )
+
+        # The release table must still exist and be queryable.
+        verify = psycopg.connect(self.db_url)
+        with verify.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM information_schema.tables "
+                "  WHERE table_name = 'release'"
+                ")"
+            )
+            assert cur.fetchone()[0], "release table disappeared after dedup kill"
+            cur.execute("SELECT count(*) FROM release")
+            row_count = cur.fetchone()[0]
+        verify.close()
+        # Either the swap happened atomically before the kill (deduped count
+        # == 25_000 because every pair shares a master_id) or the swap was
+        # aborted and the original 50_000 rows survive.
+        assert row_count in (25_000, 50_000), (
+            f"Unexpected release row count after kill: {row_count}. "
+            "Expected either pre-swap (50_000) or post-swap (25_000)."
+        )
+
+        # Subsequent rerun must clean up dangling new_* tables and finish.
+        rerun_conn = psycopg.connect(self.db_url, autocommit=True)
+        try:
+            # ensure_dedup_ids may have been left behind; drop it to force a
+            # rerun against the current state of the release table.
+            with rerun_conn.cursor() as cur:
+                cur.execute("DROP TABLE IF EXISTS dedup_delete_ids")
+            delete_count = dedup_releases.ensure_dedup_ids(rerun_conn)
+            if delete_count > 0:
+                dedup_releases.copy_table(
+                    rerun_conn,
+                    "release",
+                    "new_release",
+                    "id, title, release_year, country, artwork_url, released, format",
+                    "id",
+                )
+                with rerun_conn.cursor() as cur:
+                    cur.execute(
+                        "ALTER TABLE release_artist DROP CONSTRAINT IF EXISTS "
+                        "fk_release_artist_release"
+                    )
+                dedup_releases.swap_tables(rerun_conn, "release", "new_release")
+        finally:
+            rerun_conn.close()
+
+        # Final state: release table is queryable and dangling new_release
+        # is gone (swap renamed it; copy_table drops any leftover before
+        # creating).
+        final = psycopg.connect(self.db_url)
+        with final.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM information_schema.tables "
+                "  WHERE table_name = 'new_release'"
+                ")"
+            )
+            assert not cur.fetchone()[0], "new_release should be gone after successful rerun swap"
+            cur.execute("SELECT count(*) FROM release")
+            final_count = cur.fetchone()[0]
+        final.close()
+        # After a clean dedup the row count should be 25_000.
+        assert final_count == 25_000
+
+    def test_terminated_analyze_returns_clean_error(self) -> None:
+        """Killing a backend mid-ANALYZE on a populated table raises
+        OperationalError without corrupting the release table."""
+        analyze_conn = _build_dedup_conn(self.db_url)
+        analyze_pid = analyze_conn.info.backend_pid
+
+        terminator = _terminate_when(
+            self.db_url,
+            analyze_pid,
+            pattern_substrings=("ANALYZE",),
+        )
+
+        raised = False
+        try:
+            with analyze_conn.cursor() as cur:
+                cur.execute("BEGIN")
+                cur.execute("ANALYZE release")
+                cur.execute("ANALYZE release_artist")
+        except psycopg.OperationalError:
+            raised = True
+        finally:
+            try:
+                analyze_conn.close()
+            except Exception:
+                pass
+
+        terminator.wait(timeout=10)
+        assert terminator.is_set(), "Terminator thread did not fire"
+        if not raised:
+            pytest.skip("ANALYZE completed before pg_terminate_backend fired")
+
+        # release table data is intact and queryable.
+        verify = psycopg.connect(self.db_url)
+        with verify.cursor() as cur:
+            cur.execute("SELECT count(*) FROM release")
+            assert cur.fetchone()[0] == 50_000, (
+                "release table data should be intact after ANALYZE termination"
+            )
+            cur.execute("SELECT count(*) FROM release_artist")
+            assert cur.fetchone()[0] == 50_000
+        verify.close()
