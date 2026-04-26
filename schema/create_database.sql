@@ -3,6 +3,9 @@
 --
 -- This schema includes all columns used by cache_service.py and downstream consumers.
 -- FK constraints with ON DELETE CASCADE enable single-table pruning.
+-- Schema regression coverage: tests/integration/test_schema.py::TestSchemaProductionOrdering
+-- guards against ordering bugs (e.g. #104) by applying these files to a pristine
+-- template0-cloned database in CI.
 
 -- Create database (run as superuser)
 -- CREATE DATABASE discogs;
