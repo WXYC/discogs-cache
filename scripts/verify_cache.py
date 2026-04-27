@@ -63,11 +63,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from wxyc_etl.text import is_compilation_artist, split_artist_name_contextual
 
 from lib.format_normalization import format_matches, normalize_library_format
+from lib.observability import init_logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # Discogs suffixes like "(2)", "(3)" for disambiguation
@@ -1781,6 +1778,7 @@ async def async_main():
 
 
 def main():
+    init_logger(repo="discogs-etl", tool="discogs-etl verify_cache")
     asyncio.run(async_main())
 
 

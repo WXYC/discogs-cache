@@ -16,10 +16,9 @@ import sys
 import unicodedata
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.observability import init_logger  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # CSV files that need to be filtered by release_id.
@@ -153,6 +152,8 @@ def filter_csv_file(
 
 
 def main():
+    init_logger(repo="discogs-etl", tool="discogs-etl filter_csv")
+
     if len(sys.argv) != 4:
         print(__doc__)
         sys.exit(1)

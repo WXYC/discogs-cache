@@ -27,11 +27,8 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.format_normalization import normalize_format  # noqa: E402
+from lib.observability import init_logger  # noqa: E402
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # Table configs: (csv_filename, table_name, csv_columns, db_columns, required_columns, transforms)
@@ -697,6 +694,8 @@ def import_masters(conn, csv_dir: Path) -> int:
 
 def main():
     import argparse
+
+    init_logger(repo="discogs-etl", tool="discogs-etl import_csv")
 
     parser = argparse.ArgumentParser(description="Import Discogs CSV files into PostgreSQL")
     parser.add_argument("csv_dir", type=Path, help="Directory containing CSV files")

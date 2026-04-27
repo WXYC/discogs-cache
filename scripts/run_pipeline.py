@@ -38,6 +38,9 @@ from pathlib import Path
 import psycopg
 from wxyc_etl.state import PipelineState
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.observability import init_logger  # noqa: E402
+
 STEP_NAMES = [
     "create_schema",
     "import_csv",
@@ -50,10 +53,6 @@ STEP_NAMES = [
     "set_logged",
 ]
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).parent
@@ -754,6 +753,8 @@ def _run_xml_pipeline(
 
 def main() -> None:
     args = parse_args()
+
+    init_logger(repo="discogs-etl", tool="discogs-etl run_pipeline")
 
     python = sys.executable
     db_url = args.database_url

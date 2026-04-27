@@ -20,6 +20,10 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.observability import init_logger  # noqa: E402
 
 
 def tsv_to_sqlite(tsv_path: str, db_path: str) -> int:
@@ -77,6 +81,7 @@ def tsv_to_sqlite(tsv_path: str, db_path: str) -> int:
 
 
 if __name__ == "__main__":
+    init_logger(repo="discogs-etl", tool="discogs-etl tsv_to_sqlite")
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} <tsv_path> <db_path>", file=sys.stderr)
         sys.exit(1)

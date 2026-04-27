@@ -27,10 +27,9 @@ from pathlib import Path
 
 import psycopg
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.observability import init_logger  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -509,6 +508,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+
+    init_logger(repo="discogs-etl", tool="discogs-etl resolve_collisions")
 
     if not args.database_url:
         print("Error: --database-url or DATABASE_URL_DISCOGS required", file=sys.stderr)
