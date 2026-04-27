@@ -171,6 +171,31 @@ The `--notify` flag is always passed, so Slack notifications are sent on failure
 
 After a successful run, verify the library-metadata-lookup health endpoint returns healthy with the expected row count.
 
+## Observability
+
+Every Python entrypoint in `scripts/` initializes the shared logger at the top of `main()` via the local `lib.observability` shim:
+
+```python
+from lib.observability import init_logger
+
+init_logger(repo="discogs-etl", tool="discogs-etl <subcommand>")
+```
+
+The shim delegates to `wxyc_etl.logger.init_logger` (from WXYC/wxyc-etl#50) when it's importable, and falls back to a basic stderr `logging.basicConfig` when it isn't — this lets the entrypoints stay future-ready while CI's wxyc-etl install ref is still on a pre-#50 branch. Once CI installs from a wxyc-etl revision that ships `wxyc_etl.logger`, JSON logging and Sentry are live with no further consumer change.
+
+When wired up, this installs a JSON formatter on the root logger and (when `SENTRY_DSN` is set) hands events to the Sentry SDK. Every log line carries the four contract tags:
+
+| Tag | Source |
+|-----|--------|
+| `repo` | hard-coded `"discogs-etl"` per call site |
+| `tool` | `"discogs-etl <subcommand>"`, e.g. `discogs-etl run_pipeline`, `discogs-etl verify_cache` |
+| `step` | per-event, supplied via `logger.info("...", extra={"step": "import"})` |
+| `run_id` | UUIDv4 generated at `init_logger` time (one per process) |
+
+`SENTRY_DSN` is read from the environment. When unset, JSON logging still works and Sentry stays inactive — there is no hard requirement on the DSN being configured. **TODO**: provision `SENTRY_DSN` in the GitHub Actions runtime env (sync-library workflow) and on EC2 / Railway as a separate child task.
+
+Scripts that initialize the logger (subprocesses each get their own run_id, since they are independent processes): `run_pipeline.py`, `import_csv.py`, `dedup_releases.py`, `verify_cache.py`, `filter_csv.py`, `resolve_collisions.py`, `tsv_to_sqlite.py`. The shim itself lives in `lib/observability.py`.
+
 ## Development Practices
 
 ### TDD (Required)

@@ -27,10 +27,9 @@ from pathlib import Path
 
 import psycopg
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.observability import init_logger  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -546,6 +545,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main():
     args = parse_args()
     db_url = args.database_url
+
+    init_logger(repo="discogs-etl", tool="discogs-etl dedup_releases")
 
     logger.info(f"Connecting to {db_url}")
     conn = psycopg.connect(db_url, autocommit=True)
