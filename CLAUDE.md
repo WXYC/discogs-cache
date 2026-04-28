@@ -242,7 +242,7 @@ from lib.observability import init_logger
 init_logger(repo="discogs-etl", tool="discogs-etl <subcommand>")
 ```
 
-The shim delegates to `wxyc_etl.logger.init_logger` (from WXYC/wxyc-etl#50) when it's importable, and falls back to a basic stderr `logging.basicConfig` when it isn't — this lets the entrypoints stay future-ready while CI's wxyc-etl install ref is still on a pre-#50 branch. Once CI installs from a wxyc-etl revision that ships `wxyc_etl.logger`, JSON logging and Sentry are live with no further consumer change.
+The shim delegates to `wxyc_etl.logger.init_logger` when it's importable, and falls back to a basic stderr `logging.basicConfig` when it isn't. As of `wxyc-etl` 0.1.0 (on PyPI), `wxyc_etl.logger` ships in the published wheel, so JSON logging and Sentry are live by default; the fallback exists so the entrypoints still work in environments where the wheel hasn't been installed.
 
 When wired up, this installs a JSON formatter on the root logger and (when `SENTRY_DSN` is set) hands events to the Sentry SDK. Every log line carries the four contract tags:
 
