@@ -5,6 +5,12 @@ name: Rebuild Discogs Cache
 # settle and to stagger against sister cache-builder repos (e.g. wikidata-cache,
 # musicbrainz-cache).
 #
+# The pipeline runs `--pair-filter`, which narrows the converter's
+# artist-only output (~4M release rows) to releases whose (artist, title)
+# pair matches the WXYC library (~50K) before the import step. Without
+# this, the import overflows small destination DBs (Railway-sized) at
+# `COPY release_artist` — see #128.
+#
 # TODO: the Discogs releases dump is ~63 GB compressed XML; expanding +
 # converting it can exceed the GitHub Actions free-runner disk (~14 GB) and
 # 6-hour wall-clock budget. The skeleton here lets operators kick the rebuild
@@ -118,4 +124,5 @@ jobs:
             --xml data/releases.xml.gz \
             --generate-library-db \
             --catalog-source tubafrenzy \
-            --catalog-db-url "${{ secrets.LIBRARY_CATALOG_DB_URL }}"
+            --catalog-db-url "${{ secrets.LIBRARY_CATALOG_DB_URL }}" \
+            --pair-filter
