@@ -53,10 +53,11 @@ alembic stamp head
 psql "$DATABASE_URL_DISCOGS" -c "SELECT * FROM alembic_version"
 # → should print version_num = '0001_initial'
 
-# 6. Dry-run upgrade to confirm there's nothing pending.
+# 6. Confirm alembic agrees the DB is at head. Read-only; safe.
 alembic current                # → 0001_initial (head)
-alembic upgrade head           # → no upgrades executed (we're already at head)
 ```
+
+Do **not** run `alembic upgrade head --sql` here as a "dry run". See the warning below — that command is destructive against this baseline and was the trigger for the 2026-04-28 prod-cache wipe. The `0001_initial.py` migration now refuses to run in offline mode and will raise loudly, but the runbook should not invite the user to test that path.
 
 After this, the monthly rebuild workflow runs `alembic upgrade head` automatically before each rebuild, applying any new migrations between rebuilds.
 
@@ -95,17 +96,15 @@ Recovery:
 
 ### Case 3: ran `alembic upgrade head` on a populated DB *without* stamping first
 
-This is what the `Verify alembic baseline is stamped` workflow guard exists to prevent. If it gets bypassed (manual run from a developer machine, etc.), `0001_initial.py` fails fast on the first `CREATE TABLE` against an existing relation:
+This is what the `Verify alembic baseline is stamped` workflow guard exists to prevent. If it gets bypassed (manual run from a developer machine, etc.), `0001_initial.py.upgrade()`'s populated-DB short-circuit detects the existing `release` and `cache_metadata` tables, logs `0001_initial: discogs-cache schema already present; skipping schema apply`, and returns without re-executing `schema/*.sql`. Alembic then writes `alembic_version = '0001_initial'` itself, so the DB ends up in the same state as if it had been properly `alembic stamp head`-ed.
 
-```
-psycopg.errors.DuplicateTable: relation "release" already exists
-```
+That outcome is safe — no data loss — but the audit trail is murky (no operator-issued stamp). If you discover this happened, run the verification block in [Verifying after a stamp](#verifying-after-a-stamp) to confirm the schema and row counts match what you expect, and add a note to the operator log.
 
-Because the file uses autocommit, partial application is technically possible but unlikely (the failing statement is the first DDL in the first SQL file). Inspect the schema after the failure: `\dt+` to see what's there, `\d+ <suspect>` to compare. If anything was created that wasn't there before, restore from the snapshot taken in step 1.
+The destructive path the populated-DB guard cuts off is: side-channel re-runs `schema/*.sql`, whose first statements are `DROP TABLE IF EXISTS release ... CASCADE`, dropping every release/artist/master table. The guard fails open by checking for `cache_metadata` (specific to this schema) alongside `release`, so an unrelated DB that happens to have a `release` table won't accidentally short-circuit.
 
 ## Verifying after a stamp
 
-The procedure's step 4 covers the happy path. For a more thorough check (e.g., before letting the next monthly cron run):
+The procedure's step 4 covers the happy path. For a more thorough check (e.g., before letting the next monthly cron run), all read-only:
 
 ```bash
 # Confirm the version row.
@@ -117,11 +116,30 @@ psql "$DATABASE_URL_DISCOGS" -c "SELECT version_num FROM alembic_version"
 psql "$DATABASE_URL_DISCOGS" -c "SELECT count(*) FROM release"
 # → expect a multi-million row count for prod, ~0 for empty staging.
 
-# Dry-run what the next workflow run would do.
+# Confirm alembic agrees on current head. Read-only; safe.
 DATABASE_URL_DISCOGS="$DATABASE_URL_DISCOGS" .venv/bin/alembic current
 # → 0001_initial (head)
-DATABASE_URL_DISCOGS="$DATABASE_URL_DISCOGS" .venv/bin/alembic upgrade head --sql
-# → "-- Running upgrade ..." for any pending migration, empty for none.
 ```
 
 If `alembic current` reports `0001_initial (head)` and the `release` row count looks right, the stamp landed correctly.
+
+> **Do not run `alembic upgrade head --sql` against this database.** See the next section.
+
+### Why `alembic upgrade head --sql` is unsafe with this baseline
+
+`--sql` is documented as "emit SQL instead of executing" — a dry run. That contract holds only when the migration's `upgrade()` uses alembic's wrapped connection (`op.execute`, `op.create_table`, etc.). `0001_initial.py.upgrade()` does not: it opens its own `psycopg.connect(..., autocommit=True)` and runs `schema/create_database.sql` (and friends) directly. That side-channel cannot be intercepted by `--sql`, so:
+
+1. Alembic's stdout shows `BEGIN; CREATE TABLE alembic_version ...; INSERT INTO alembic_version ...; COMMIT;` — looks like a no-op dry run.
+2. The side-channel quietly executes `schema/create_database.sql`, whose first statements are `DROP TABLE IF EXISTS release ... CASCADE`.
+3. Every release/artist/master table is dropped and recreated empty.
+4. The command exits 0.
+
+This is what wiped the WXYC prod discogs-cache on 2026-04-28 (~14,667 release rows, recovered manually over ~6 hours).
+
+**Defensive guards now in place:**
+
+- `0001_initial.py.upgrade()` raises `RuntimeError` immediately if `context.is_offline_mode()` is true. `alembic upgrade head --sql` will fail fast with a clear message instead of silently dropping tables.
+- A second guard short-circuits `upgrade()` if `release` and `alembic_version` are both already present, so a misconfigured live invocation also fails safe.
+- An integration test (`tests/integration/test_alembic_baseline.py::test_alembic_upgrade_head_sql_against_populated_db_is_safe`) pins both behaviors.
+
+If a future migration needs autocommit DDL (e.g., `CREATE INDEX CONCURRENTLY`, extension creation), keep the guards: either follow the same `is_offline_mode()` check, or write the migration with `op.execute(..., execution_options={"isolation_level": "AUTOCOMMIT"})` so alembic's offline mode can intercept it.
