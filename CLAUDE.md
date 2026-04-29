@@ -14,6 +14,7 @@ ETL pipeline for building and maintaining a PostgreSQL cache of Discogs release 
 1. **Download** Discogs monthly data dumps (XML) from https://discogs-data-dumps.s3.us-west-2.amazonaws.com/index.html
 2. **Enrich** `library_artists.txt` with WXYC cross-references (via `wxyc-enrich-library-artists` CLI from wxyc-catalog, optional)
 3. **Convert and filter** XML to CSV using [discogs-xml-converter](https://github.com/WXYC/discogs-xml-converter) (Rust binary), with optional artist filtering via `--library-artists`. Accepts a single XML file or a directory containing releases.xml, artists.xml, and labels.xml. When artists.xml is present, alias-enhanced filtering is enabled automatically. When labels.xml is present, `label_hierarchy.csv` is produced for sublabel-aware dedup.
+3a. **(Optional) Pair-wise filter** with `--pair-filter` (requires `--library-db`). Narrows the converter's artist-filtered CSVs (~4M releases) to releases whose `(artist, title)` matches a library entry (~50K). Used by the monthly rebuild workflow so the import step fits on Railway-sized destination DBs without overflowing the volume during `COPY release_artist` (#128). Diacritic-normalised on both sides; known false negatives are compound-artist library entries like "Duke Ellington & John Coltrane" whose Discogs releases split into separate `release_artist` rows.
 4. **Create schema** (`schema/create_database.sql`) and **functions** (`schema/create_functions.sql`), then **SET UNLOGGED** on all tables to skip WAL writes during bulk import
 5. **Import** filtered CSVs into PostgreSQL (`scripts/import_csv.py`)
 6. **Create indexes** including accent-insensitive trigram GIN indexes (`schema/create_indexes.sql`)
@@ -118,7 +119,7 @@ docker compose up db -d     # just the database (for tests)
 ### Key Files
 
 - `scripts/run_pipeline.py` -- Pipeline orchestrator (--xml for steps 2-9, --csv-dir for steps 4-9)
-- `scripts/filter_csv.py` -- Filter Discogs CSVs to library artists (standalone, used outside the pipeline)
+- `scripts/filter_csv.py` -- Filter Discogs CSVs against the WXYC library. Two modes: (default) artist-only, takes `library_artists.txt`; (`--library-db`) pair-wise on `(artist, title)` against a SQLite library.db. Pair-wise mode is what the monthly rebuild workflow runs via `--pair-filter`; standalone use is also supported.
 - `scripts/import_csv.py` -- Import CSVs into PostgreSQL (psycopg COPY). Child tables are imported in parallel via ThreadPoolExecutor after parent tables. Artist detail tables (artist_alias, artist_member) are filtered to known artist IDs to prevent FK violations, since the converter's CSVs contain all Discogs artists. Tables with `unique_key` configs are deduped in-memory during COPY.
 - `scripts/dedup_releases.py` -- Deduplicate releases by master_id, preferring label match + sublabel resolution, US releases (copy-swap with `DROP CASCADE`). Index/constraint creation is parallelized via ThreadPoolExecutor.
 - `scripts/verify_cache.py` -- Multi-index fuzzy matching for KEEP/PRUNE classification; `--copy-to` streams matches to a target DB. Phase 4 (fuzzy matching) has two paths: when `wxyc-etl` is installed, `batch_classify_releases()` runs all scoring in Rust with rayon parallelism; otherwise, falls back to ProcessPoolExecutor with rapidfuzz. Set `WXYC_ETL_NO_RUST=1` to force the Python fallback. Large prune sets (>10K IDs) use copy-and-swap instead of CASCADE DELETE.
@@ -202,6 +203,8 @@ This pipeline runs monthly (or when Discogs publishes new data dumps). It has a 
 A GitHub Actions cron workflow runs `scripts/run_pipeline.py --xml ...` on the 4th of each month at 06:00 UTC, staggered a few days after Discogs publishes the new dump. It can also be triggered manually with an optional `dump_url` input: `gh workflow run rebuild-cache.yml`.
 
 The job downloads `releases.xml.gz` for the current month from `discogs-data-dumps.s3.us-west-2.amazonaws.com`, builds `discogs-xml-converter` from source, and runs the full XML-mode pipeline (steps 2-10) against `DATABASE_URL_DISCOGS`. Library catalog is generated inline via `--generate-library-db --catalog-source tubafrenzy`.
+
+The workflow runs `--pair-filter` so the import payload to `DATABASE_URL_DISCOGS` is ~50K release rows instead of the converter's ~4M, which is what makes a Railway-sized destination DB feasible (the unfiltered import overflows the volume at `COPY release_artist`; see #128).
 
 **Caveat — runner capacity**: the Discogs releases dump is ~63 GB compressed XML and the conversion + Postgres bulk load can exceed the GitHub Actions free hosted runner's ~14 GB disk and 6-hour wall-clock budget. The workflow file is the deliverable; provisioning a self-hosted or larger hosted runner is a follow-up operator task. Until then, expect the scheduled tick to fail loudly rather than silently produce a half-built cache.
 

@@ -21,6 +21,10 @@ find_matching_release_ids = _fc.find_matching_release_ids
 filter_csv_file = _fc.filter_csv_file
 get_release_id_column = _fc.get_release_id_column
 main = _fc.main
+normalize_title = _fc.normalize_title
+load_library_pairs = _fc.load_library_pairs
+find_matching_release_ids_pairwise = _fc.find_matching_release_ids_pairwise
+filter_csvs_by_pairs = _fc.filter_csvs_by_pairs
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -314,7 +318,9 @@ class TestMain:
         monkeypatch.setattr("sys.argv", ["filter_csv.py"])
         with pytest.raises(SystemExit) as exc_info:
             main()
-        assert exc_info.value.code == 1
+        # argparse uses exit code 2 for usage errors; the legacy 3-positional
+        # CLI used exit 1. The exit-on-bad-input contract still holds.
+        assert exc_info.value.code in (1, 2)
 
     def test_missing_library_artists_exits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -435,3 +441,258 @@ class TestMain:
             rows = list(reader)
         assert len(rows) == 1
         assert rows[0]["id"] == "5001"
+
+
+# ---------------------------------------------------------------------------
+# Pair-wise (artist, title) filter — closes the OOM gap on Railway-sized DBs
+# (#128). The artist-only filter passes ~4.2M releases through; pair-wise
+# narrows to ~58K so import doesn't overflow the destination volume.
+# ---------------------------------------------------------------------------
+
+
+import sqlite3  # noqa: E402
+
+
+class TestNormalizeTitle:
+    """Release-title normalization for pair matching."""
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("Confield", "confield"),
+            ("  Confield  ", "confield"),
+            ("CONFIELD", "confield"),
+            ("On Your Own Love Again", "on your own love again"),
+            ("", ""),
+            # Diacritic regressions: the title's normalization must be the
+            # same shape as artist normalization so a Discogs "PAINLESS"
+            # against library "PAINLESS" matches even after the canonical
+            # diacritic-bearing artist (Nilüfer Yanya) routes them together.
+            ("Pequeña Vertigem de Amor", "pequena vertigem de amor"),
+            ("Père Ubu's Métal Box", "pere ubu's metal box"),
+        ],
+    )
+    def test_normalize_title(self, raw: str, expected: str) -> None:
+        assert normalize_title(raw) == expected
+
+
+class TestLoadLibraryPairs:
+    """Loading (artist, title) pairs from the library.db SQLite file."""
+
+    def _make_library_db(self, tmp_path: Path, rows: list[tuple[str, str]]) -> Path:
+        path = tmp_path / "library.db"
+        conn = sqlite3.connect(str(path))
+        conn.execute(
+            "CREATE TABLE library (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "artist TEXT NOT NULL, title TEXT NOT NULL, format TEXT)"
+        )
+        conn.executemany("INSERT INTO library (artist, title) VALUES (?, ?)", rows)
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_returns_inverted_index_keyed_by_title(self, tmp_path: Path) -> None:
+        db = self._make_library_db(
+            tmp_path,
+            [
+                ("Autechre", "Confield"),
+                ("Autechre", "Amber"),
+                ("Stereolab", "Aluminum Tunes"),
+            ],
+        )
+        pairs = load_library_pairs(db)
+        assert pairs == {
+            "confield": {"autechre"},
+            "amber": {"autechre"},
+            "aluminum tunes": {"stereolab"},
+        }
+
+    def test_collapses_duplicate_rows(self, tmp_path: Path) -> None:
+        # The fixture library.db has duplicate (artist, title) rows from
+        # multiple library copies of the same album. The set-valued index
+        # collapses these.
+        db = self._make_library_db(
+            tmp_path,
+            [
+                ("Stereolab", "Aluminum Tunes"),
+                ("Stereolab", "Aluminum Tunes"),
+                ("Stereolab", "Aluminum Tunes"),
+            ],
+        )
+        pairs = load_library_pairs(db)
+        assert pairs == {"aluminum tunes": {"stereolab"}}
+
+    def test_groups_multiple_artists_under_same_title(self, tmp_path: Path) -> None:
+        db = self._make_library_db(
+            tmp_path,
+            [
+                ("Various Artists", "Compilation"),
+                ("Stereolab", "Compilation"),
+            ],
+        )
+        pairs = load_library_pairs(db)
+        assert pairs == {"compilation": {"various artists", "stereolab"}}
+
+    def test_normalizes_diacritics_on_load(self, tmp_path: Path) -> None:
+        db = self._make_library_db(
+            tmp_path,
+            [("Nilüfer Yanya", "PAINLESS")],
+        )
+        pairs = load_library_pairs(db)
+        assert pairs == {"painless": {"nilufer yanya"}}
+
+
+class TestFindMatchingReleaseIdsPairwise:
+    """Two-pass pair-wise scan: keep only release_ids whose (artist, title)
+    matches a library pair."""
+
+    def _write_csv(self, path: Path, header: list[str], rows: list[list[str]]) -> None:
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            w.writerows(rows)
+
+    def test_exact_pair_match(self, tmp_path: Path) -> None:
+        release = tmp_path / "release.csv"
+        release_artist = tmp_path / "release_artist.csv"
+        self._write_csv(release, ["id", "title"], [["1001", "Confield"]])
+        self._write_csv(release_artist, ["release_id", "artist_name"], [["1001", "Autechre"]])
+        pairs = {"confield": {"autechre"}}
+        ids = find_matching_release_ids_pairwise(release, release_artist, pairs)
+        assert ids == {1001}
+
+    def test_title_in_library_but_artist_isnt_excluded(self, tmp_path: Path) -> None:
+        release = tmp_path / "release.csv"
+        release_artist = tmp_path / "release_artist.csv"
+        self._write_csv(release, ["id", "title"], [["1001", "Confield"]])
+        # release_artist has the right title-keyed candidate but artist is wrong
+        self._write_csv(
+            release_artist, ["release_id", "artist_name"], [["1001", "Some Other Band"]]
+        )
+        pairs = {"confield": {"autechre"}}
+        ids = find_matching_release_ids_pairwise(release, release_artist, pairs)
+        assert ids == set()
+
+    def test_title_not_in_library_excludes_release(self, tmp_path: Path) -> None:
+        release = tmp_path / "release.csv"
+        release_artist = tmp_path / "release_artist.csv"
+        self._write_csv(release, ["id", "title"], [["1001", "Some Other Album"]])
+        self._write_csv(release_artist, ["release_id", "artist_name"], [["1001", "Autechre"]])
+        pairs = {"confield": {"autechre"}}
+        ids = find_matching_release_ids_pairwise(release, release_artist, pairs)
+        assert ids == set()
+
+    def test_multi_artist_release_kept_when_one_matches(self, tmp_path: Path) -> None:
+        # A release with several featured artists is kept if ANY one of them
+        # forms a library pair with the release's title.
+        release = tmp_path / "release.csv"
+        release_artist = tmp_path / "release_artist.csv"
+        self._write_csv(release, ["id", "title"], [["9001", "From Here We Go Sublime"]])
+        self._write_csv(
+            release_artist,
+            ["release_id", "artist_name"],
+            [
+                ["9001", "Some Producer"],
+                ["9001", "Field, The"],
+            ],
+        )
+        pairs = {"from here we go sublime": {"field, the"}}
+        ids = find_matching_release_ids_pairwise(release, release_artist, pairs)
+        assert ids == {9001}
+
+    def test_diacritics_normalized_on_both_sides(self, tmp_path: Path) -> None:
+        release = tmp_path / "release.csv"
+        release_artist = tmp_path / "release_artist.csv"
+        self._write_csv(release, ["id", "title"], [["6001", "PAINLESS"]])
+        self._write_csv(release_artist, ["release_id", "artist_name"], [["6001", "Nilüfer Yanya"]])
+        # Library entries are pre-normalized by load_library_pairs, but we
+        # build the pairs-set the same way here to keep the test honest.
+        pairs = {"painless": {"nilufer yanya"}}
+        ids = find_matching_release_ids_pairwise(release, release_artist, pairs)
+        assert ids == {6001}
+
+    def test_handles_malformed_rows(self, tmp_path: Path) -> None:
+        # Defensive: short rows / non-numeric IDs should be skipped without
+        # taking the whole pass down.
+        release = tmp_path / "release.csv"
+        release_artist = tmp_path / "release_artist.csv"
+        self._write_csv(
+            release,
+            ["id", "title"],
+            [
+                ["not-an-int", "Confield"],
+                ["1001", "Confield"],
+            ],
+        )
+        self._write_csv(
+            release_artist,
+            ["release_id", "artist_name"],
+            [
+                ["1001", "Autechre"],
+                ["bad-row"],  # short row
+            ],
+        )
+        pairs = {"confield": {"autechre"}}
+        ids = find_matching_release_ids_pairwise(release, release_artist, pairs)
+        assert ids == {1001}
+
+
+class TestFilterCsvsByPairs:
+    """End-to-end orchestrator: library.db + CSV input dir → filtered CSVs."""
+
+    def test_filters_against_real_fixtures(self, tmp_path: Path) -> None:
+        # Reuses tests/fixtures/library.db + tests/fixtures/csv/. Combined,
+        # they contain six (artist, title) pairs that match the fixture
+        # release rows: (Autechre, Confield) covers 1001/1002/1003;
+        # (Autechre, Amber) → 3001; (Autechre, Tri Repetae) → 4001;
+        # (Stereolab, Aluminum Tunes) → 2001/2002; (Field, The, From Here
+        # We Go Sublime) → 9001; (Nilüfer Yanya, PAINLESS) → 6001 via
+        # diacritic normalization. Compound-artist release 9002 (Duke
+        # Ellington & John Coltrane) is a known false negative — the
+        # split artist rows don't match the combined library string.
+        out_dir = tmp_path / "filtered"
+        stats = filter_csvs_by_pairs(
+            FIXTURES_DIR / "library.db",
+            FIXTURES_DIR / "csv",
+            out_dir,
+        )
+
+        with open(out_dir / "release.csv") as f:
+            kept_ids = {int(row["id"]) for row in csv.DictReader(f)}
+
+        assert kept_ids == {1001, 1002, 1003, 2001, 2002, 3001, 4001, 6001, 9001}
+
+        # Sanity: the filtered CSV is a strict subset of the fixture, and
+        # release_artist.csv has been narrowed to the surviving release_ids.
+        with open(out_dir / "release_artist.csv") as f:
+            ra_release_ids = {int(row["release_id"]) for row in csv.DictReader(f)}
+        assert ra_release_ids <= kept_ids
+        assert ra_release_ids == kept_ids  # every survivor still has its artists
+
+        # Stats are populated for each file actually present in the input dir.
+        assert "release.csv" in stats
+        assert "release_artist.csv" in stats
+        in_count, out_count = stats["release.csv"]
+        assert out_count == len(kept_ids)
+        assert in_count > out_count  # some releases were dropped
+
+    def test_overwrites_input_when_input_and_output_dir_match(self, tmp_path: Path) -> None:
+        # Deployment pattern: rebuild-cache.yml runs the pair-wise filter
+        # in-place over the converter's output dir to keep runner disk small.
+        # Copy the fixture CSVs into a writable scratch dir first.
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        for src in (FIXTURES_DIR / "csv").iterdir():
+            if src.is_file():
+                (scratch / src.name).write_bytes(src.read_bytes())
+
+        filter_csvs_by_pairs(
+            FIXTURES_DIR / "library.db",
+            scratch,
+            scratch,
+        )
+
+        with open(scratch / "release.csv") as f:
+            kept_ids = {int(row["id"]) for row in csv.DictReader(f)}
+        # Same result as the separate-output case.
+        assert 1001 in kept_ids and 9002 not in kept_ids

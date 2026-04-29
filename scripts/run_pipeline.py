@@ -247,6 +247,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "still written to the output directory.",
     )
     parser.add_argument(
+        "--pair-filter",
+        action="store_true",
+        default=False,
+        help="After the converter's artist-only filter, narrow the CSVs further "
+        "to releases whose (artist, title) pair matches a library entry. Cuts "
+        "the import payload from ~4M release rows to ~50K, which is what makes "
+        "the rebuild workflow fit on small destination DBs (Railway-sized; "
+        "see #128). Requires --library-db (or --generate-library-db). "
+        "Incompatible with --direct-pg (which bypasses CSVs entirely).",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         default=False,
@@ -310,6 +321,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if args.target_db_url and not args.library_db and not args.generate_library_db:
         parser.error("--library-db or --generate-library-db is required when using --target-db-url")
+
+    if args.pair_filter:
+        if args.direct_pg:
+            parser.error(
+                "--pair-filter cannot be combined with --direct-pg "
+                "(--direct-pg bypasses the CSV staging that --pair-filter operates on)"
+            )
+        if not args.library_db and not args.generate_library_db:
+            parser.error(
+                "--pair-filter requires --library-db or --generate-library-db so the "
+                "(artist, title) pairs have a source to match against"
+            )
 
     return args
 
@@ -524,6 +547,27 @@ def convert_and_filter(
         "Convert and import XML to PostgreSQL" if database_url else "Convert and filter XML to CSV"
     )
     run_step(description, cmd)
+
+
+def pair_filter_csvs(library_db: Path, csv_dir: Path, python: str) -> None:
+    """Step 2.7: narrow the converter's artist-filtered CSVs to releases whose
+    (artist, title) pair matches a library entry.
+
+    Runs filter_csv.py --library-db in-place. Cuts release.csv from ~4M rows
+    (the converter's artist-only output) to ~50K — small enough for a
+    Railway-sized destination DB to import without overflowing the volume
+    (#128). The release_artist/label/track/etc. CSVs are filtered to the
+    same release_id set by the same call.
+    """
+    cmd = [
+        python,
+        str(SCRIPT_DIR / "filter_csv.py"),
+        "--library-db",
+        str(library_db),
+        str(csv_dir),
+        str(csv_dir),
+    ]
+    run_step("Pair-wise (artist, title) filter", cmd)
 
 
 def enrich_library_artists(
@@ -759,6 +803,13 @@ def _run_xml_pipeline(
         else:
             # Standard CSV mode
             convert_and_filter(args.xml, csv_out, args.converter, library_artists_path)
+
+            # Pair-wise filter narrows ~4M release rows to ~50K so the
+            # downstream import fits on a small destination DB. In-place
+            # rewrite over csv_out keeps runner disk small. Validated up
+            # front in parse_args() to require --library-db.
+            if args.pair_filter:
+                pair_filter_csvs(args.library_db, csv_out, python)
 
             # Auto-detect label_hierarchy.csv
             hierarchy_csv = args.label_hierarchy

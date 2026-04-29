@@ -1078,3 +1078,83 @@ class TestParseArgsValidation:
                     "--generate-library-db",
                 ]
             )
+
+    def test_pair_filter_without_library_db_exits(self) -> None:
+        """--pair-filter needs a library source to derive (artist, title) pairs from."""
+        with pytest.raises(SystemExit):
+            run_pipeline.parse_args(["--csv-dir", "/tmp/csv", "--pair-filter"])
+
+    def test_pair_filter_with_direct_pg_exits(self) -> None:
+        """--pair-filter operates on the CSV staging that --direct-pg bypasses."""
+        with pytest.raises(SystemExit):
+            run_pipeline.parse_args(
+                [
+                    "--xml",
+                    "/tmp/dump.xml.gz",
+                    "--direct-pg",
+                    "--pair-filter",
+                    "--library-db",
+                    "/tmp/library.db",
+                ]
+            )
+
+    def test_pair_filter_with_library_db_accepted(self) -> None:
+        """--pair-filter + --library-db is the supported combination."""
+        args = run_pipeline.parse_args(
+            [
+                "--xml",
+                "/tmp/dump.xml.gz",
+                "--pair-filter",
+                "--library-db",
+                "/tmp/library.db",
+            ]
+        )
+        assert args.pair_filter is True
+        assert args.library_db == Path("/tmp/library.db")
+
+    def test_pair_filter_with_generate_library_db_accepted(self) -> None:
+        """--pair-filter + --generate-library-db (the rebuild-cache.yml shape)."""
+        args = run_pipeline.parse_args(
+            [
+                "--xml",
+                "/tmp/dump.xml.gz",
+                "--pair-filter",
+                "--generate-library-db",
+                "--catalog-source",
+                "tubafrenzy",
+                "--catalog-db-url",
+                "mysql://example/test",
+            ]
+        )
+        assert args.pair_filter is True
+        assert args.generate_library_db is True
+
+
+class TestPairFilterCsvs:
+    """The pair_filter_csvs helper invokes filter_csv.py with --library-db
+    and an in-place csv_dir."""
+
+    def test_invokes_filter_csv_in_place(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorded: dict[str, object] = {}
+
+        def fake_run_step(description: str, cmd: list[str], **kwargs) -> None:
+            recorded["description"] = description
+            recorded["cmd"] = cmd
+
+        monkeypatch.setattr(run_pipeline, "run_step", fake_run_step)
+
+        run_pipeline.pair_filter_csvs(
+            Path("/tmp/library.db"),
+            Path("/tmp/csv_out"),
+            "/usr/bin/python3",
+        )
+
+        cmd = recorded["cmd"]
+        assert cmd[0] == "/usr/bin/python3"
+        assert cmd[1].endswith("filter_csv.py")
+        assert "--library-db" in cmd
+        assert str(Path("/tmp/library.db")) in cmd
+        # Last two positional args are the input and output directories,
+        # which point at the same path so the rewrite is in-place.
+        assert cmd[-2] == str(Path("/tmp/csv_out"))
+        assert cmd[-1] == str(Path("/tmp/csv_out"))
