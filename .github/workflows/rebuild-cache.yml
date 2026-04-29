@@ -43,13 +43,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # wxyc-catalog is not yet on PyPI (tracked in WXYC/wxyc-catalog#21).
-      # Install it from git first so the editable install below can resolve it.
-      - name: Install wxyc-catalog from git
-        run: |
-          git clone --depth 1 --branch main https://github.com/WXYC/wxyc-catalog.git /tmp/wxyc-catalog
-          cd /tmp/wxyc-catalog && sed -i 's|setuptools.backends._legacy:_Backend|setuptools.build_meta|' pyproject.toml && pip install -e .
-
       - name: Install discogs-etl
         run: pip install -e ".[dev]"
 
