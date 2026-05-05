@@ -31,10 +31,15 @@ name: Rebuild Discogs Cache
 # the next escalation is `runs-on: ubuntu-latest-large` (paid hosted) or
 # a self-hosted runner.
 
+# 2026-05-05: cron disabled. Two cron-tick attempts demonstrated that the
+# rebuild doesn't fit a GitHub-hosted runner: the dump-host's Cloudflare
+# front blocks GH-runner egress IPs (the same `data.discogs.com/?download=`
+# URL serves 200 to residential IPs and 403 from a runner), and even past
+# that the workflow eats meaningful Actions minutes for a job that runs
+# fine in ~half an hour on hardware co-located with the destination DB.
+# Tracking the migration to a Railway cron service in WXYC/discogs-etl.
+# `workflow_dispatch` is kept as a manual escape hatch.
 on:
-  schedule:
-    # 06:00 UTC on the 4th of each month (staggered from sister rebuilds).
-    - cron: "0 6 4 * *"
   workflow_dispatch:
     inputs:
       dump_url:
