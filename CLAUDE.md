@@ -201,7 +201,9 @@ This pipeline runs monthly (or when Discogs publishes new data dumps). It has a 
 
 ### Monthly Cache Rebuild (`rebuild-cache.yml`)
 
-A GitHub Actions cron workflow runs `scripts/run_pipeline.py --xml ...` on the 4th of each month at 06:00 UTC, staggered a few days after Discogs publishes the new dump. It can also be triggered manually with an optional `dump_url` input: `gh workflow run rebuild-cache.yml`.
+**Status (2026-05-05)**: the cron schedule has been disabled. Two cron-tick attempts (2026-05-04, 2026-05-05) demonstrated that this rebuild doesn't fit a GitHub-hosted runner — Discogs's Cloudflare front blocks GH-runner egress IPs from `data.discogs.com/?download=` (residential IPs get 200, runner gets 403), and the job's compute envelope (~30+ min wall, multi-tens-of-GB stream) consumes meaningful Actions minutes for what should be a short job on hardware co-located with the destination DB. The migration to a Railway-side cron service is the planned replacement; the workflow file stays in the repo as a `workflow_dispatch`-only manual escape hatch until that lands.
+
+The (now-disabled) cron used to fire `scripts/run_pipeline.py --xml ...` on the 4th of each month at 06:00 UTC. The workflow can still be triggered manually via `gh workflow run rebuild-cache.yml` with an optional `dump_url` input.
 
 The job streams `releases.xml.gz` for the current month from `data.discogs.com` (the public download endpoint — direct S3 access via `discogs-data-dumps.s3.us-west-2.amazonaws.com` returns 403), downloads the daily-fresh `library.db` from `WXYC/library-metadata-lookup`'s `streaming-data-v1` release (produced by `sync-library.yml`), builds `discogs-xml-converter` from source, and runs the full XML-mode pipeline (steps 2-10) against `DATABASE_URL_DISCOGS`.
 
