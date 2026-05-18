@@ -90,6 +90,12 @@ def test_lookup_negative_table_created_at_head(db_url: str) -> None:
             f"ttl_seconds integer missing or wrong type: {cols.get('ttl_seconds')}"
         )
         assert cols["ttl_seconds"][1] == "NO", "ttl_seconds must be NOT NULL"
+        # 7 days = 604800 s. Pinned here (mirroring the attempted_at NOW()
+        # assertion above) so the migration default and the schema-mirror
+        # default can't drift apart silently.
+        assert "604800" in (cols["ttl_seconds"][2] or ""), (
+            f"ttl_seconds default must be 604800: got {cols['ttl_seconds'][2]!r}"
+        )
 
         # key_hash is the primary key.
         cur.execute(
